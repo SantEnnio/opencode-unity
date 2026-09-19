@@ -15,23 +15,22 @@
   "author": "Ennio Pirolo (Ambiens VR)",
   "license": "MIT",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./dist/index.js"
   },
   "bin": {
-    "opencode-unity": "./src/cli.ts"
+    "opencode-unity": "./dist/cli.js"
   },
   "files": [
-    "src",
+    "dist",
     "bin",
-    "scripts",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
     "README.md"
   ],
   "engines": {
-    "bun": ">=1.1.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "test": "bun test",
@@ -40,7 +39,9 @@
     "install:global": "bun run scripts/install.ts",
     "uninstall:global": "bun run scripts/install.ts --uninstall",
     "docs:install": "bun run src/cli.ts docs install",
-    "prepack": "bun run scripts/prepack.ts"
+    "prepack": "bun run scripts/prepack.ts",
+    "build": "bun run scripts/bundle.ts",
+    "test:node": "bun run build && node --no-warnings test/node-smoke.mjs"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.18.31"

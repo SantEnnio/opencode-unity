@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { Database } from "../src/sqlite.ts"
 import { describe, expect, test } from "bun:test"
 import { ingest } from "../src/graph/build.ts"
 import { SymbolGraph } from "../src/graph/db.ts"

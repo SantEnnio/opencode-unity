@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // Maintenance commands for things too heavy to start from inside a chat session.
 //   opencode-unity docs install [unityVersion|projectPath] [--keep-zip]
 //   opencode-unity docs status  [unityVersion|projectPath]

@@ -1,5 +1,4 @@
 import { type Hooks, type Plugin, tool } from "@opencode-ai/plugin"
-import type { Database } from "bun:sqlite"
 import fs from "node:fs"
 import path from "node:path"
 import { toProjectPath } from "./compile/diagnostics.ts"
@@ -15,9 +14,12 @@ import { checkWrite } from "./guard.ts"
 import { lintSource, renderLint } from "./lint.ts"
 import { lookup } from "./lookup.ts"
 import { loadOptions } from "./options.ts"
+import type { Database } from "./sqlite.ts"
 import { renderReport } from "./report.ts"
 import { AGENT_PROMPT, projectFacts, renderRules } from "./rules.ts"
-import { editorCommand, editorConnected, editorHasProjectOpen, spawnCaptured } from "./unity/cli.ts"
+import { renderStatus, startupLine } from "./status.ts"
+import { run as runProcess } from "./runtime.ts"
+import { editorCommand, editorConnected, editorHasProjectOpen } from "./unity/cli.ts"
 import { cacheDir, findEditor, findEditorExecutable, loadProject, type UnityProject } from "./unity/discovery.ts"
 import { runTests } from "./unity/tests.ts"
 import { writtenPaths } from "./written-paths.ts"
@@ -200,6 +202,12 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
     return next
   }
 
+  // Say so once: a plugin that works silently looks exactly like one that never loaded.
+  void log("info", startupLine(startupProject))
+  void client.tui
+    .showToast({ body: { title: "opencode-unity", message: `Active on Unity ${startupProject.version}. /unity shows the status.`, variant: "success", duration: 4000 } })
+    .catch(() => {})
+
   // Warm up front: the first graph build takes a few seconds and should not land on the first edit.
   void graphFor(startupProject)
   if (options.docs === "auto" && !docsInstalled(startupProject.version)) startDocsInstall(startupProject)
@@ -254,6 +262,14 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
     },
 
     tool: {
+      unity_status: tool({
+        description: "Show whether the opencode-unity plugin is active on this project and which compile, test, docs and Editor routes are available. Return its output to the user unchanged.",
+        args: {},
+        async execute(_args, context) {
+          return renderStatus(projectAt(context.directory), options, context.abort)
+        },
+      }),
+
       unity_compile: tool({
         description:
           "Compile the Unity project's C# scripts and return the compiler errors, each with the real Unity API that fixes it. Run it whenever you are unsure the code builds.",
@@ -376,6 +392,14 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
     },
 
     config: async (config) => {
+      config.command = {
+        ...config.command,
+        unity: {
+          description: "opencode-unity: is the plugin active, and what can it do on this project?",
+          template: "Call the unity_status tool and show me its output exactly as returned, in a code block. Do nothing else.",
+          ...config.command?.unity,
+        },
+      }
       if (options.agent === false) return
       config.agent = {
         ...config.agent,
@@ -410,7 +434,7 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
 
         const logFile = path.join(project.root, "Logs", `opencode-unity-${Date.now()}.log`)
         fs.mkdirSync(path.dirname(logFile), { recursive: true })
-        const result = await spawnCaptured(
+        const result = await runProcess(
           [executable, "-batchmode", "-quit", "-nographics", "-projectPath", project.root, "-executeMethod", args.method, "-logFile", logFile],
           { timeoutMs: 1_800_000, signal: context.abort },
         )

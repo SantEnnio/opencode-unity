@@ -1,6 +1,7 @@
-import { Database } from "bun:sqlite"
 import fs from "node:fs"
 import path from "node:path"
+import { moduleDir, run } from "../runtime.ts"
+import { Database } from "../sqlite.ts"
 import { SCHEMA, SCHEMA_VERSION, stripGenerics } from "./db.ts"
 
 type ExportedObsolete = { message: string; error: boolean }
@@ -41,10 +42,13 @@ export type GraphSource = {
   fingerprint: string
 }
 
-// From source: <package>/bin. Installed: the bundle sits in <config>/plugins, its assets in <config>/opencode-unity.
+// From source: src/graph -> <package>/bin. npm package: dist -> <package>/bin.
+// Global install: the bundle sits in <config>/plugins, its assets in <config>/opencode-unity.
+const here = moduleDir(import.meta.url)
 const EXPORTER_CANDIDATES = [
-  path.join(import.meta.dir, "..", "..", "bin", "symbol-exporter", "symbol-exporter.dll"),
-  path.join(import.meta.dir, "..", "opencode-unity", "symbol-exporter", "symbol-exporter.dll"),
+  path.join(here, "..", "..", "bin", "symbol-exporter", "symbol-exporter.dll"),
+  path.join(here, "..", "bin", "symbol-exporter", "symbol-exporter.dll"),
+  path.join(here, "..", "opencode-unity", "symbol-exporter", "symbol-exporter.dll"),
 ]
 
 /**
@@ -158,8 +162,7 @@ async function runExporter(dirs: string[], exclude: RegExp | undefined, outFile:
   for (const dir of dirs) args.push("--dir", dir)
   if (exclude) args.push("--exclude", exclude.source)
 
-  const proc = Bun.spawn(["dotnet", exporter, ...args], { stdout: "ignore", stderr: "pipe" })
-  const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()])
+  const { exitCode, stderr } = await run(["dotnet", exporter, ...args])
   if (exitCode !== 0) throw new Error(`symbol exporter failed (${exitCode}): ${stderr.trim()}`)
 }
 

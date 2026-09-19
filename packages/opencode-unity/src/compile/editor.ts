@@ -4,7 +4,8 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { editorCommand, type RunOptions, spawnCaptured } from "../unity/cli.ts"
+import { run, type RunOptions } from "../runtime.ts"
+import { editorCommand } from "../unity/cli.ts"
 import { findEditor, findEditorExecutable, type UnityProject } from "../unity/discovery.ts"
 import { parseDiagnostics } from "./diagnostics.ts"
 import type { CompileResult } from "./dotnet.ts"
@@ -60,7 +61,7 @@ export async function compileInBatchMode(project: UnityProject, editorPath: stri
   const started = Date.now()
   const logFile = path.join(os.tmpdir(), `opencode-unity-compile-${process.pid}-${started}.log`)
   try {
-    await spawnCaptured([executable, "-batchmode", "-quit", "-nographics", "-accept-apiupdate", "-projectPath", project.root, "-logFile", logFile], {
+    await run([executable, "-batchmode", "-quit", "-nographics", "-accept-apiupdate", "-projectPath", project.root, "-logFile", logFile], {
       timeoutMs: options.timeoutMs ?? 600_000,
       signal: options.signal,
     })

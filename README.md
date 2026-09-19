@@ -24,6 +24,11 @@ Add the plugin to your opencode config (`~/.config/opencode/opencode.json` for e
 The plugin activates when the opened folder is, contains, or sits inside a Unity project, and
 does nothing anywhere else.
 
+**Is it on?** Open a Unity project and type `/unity`: the plugin reports that it is active, what
+it found (Unity version, Editor install, .NET SDK, docs, Unity CLI) and which route compile, tests
+and console will take. The `unity-coder` agent also appears in the agent list, only in Unity
+projects. At startup it writes one line to the opencode log (`opencode-unity x.y.z active: ...`).
+
 From a clone of this repository instead (needs [Bun](https://bun.sh)):
 
 ```sh
@@ -73,6 +78,7 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
 
 | Tool | Purpose |
 |---|---|
+| `unity_status` (`/unity`) | Is the plugin active, what did it find, which routes are available |
 | `unity_lookup` | Fuzzy API lookup: signatures, overloads, obsolete → replacement, example from the docs |
 | `unity_docs_search` / `unity_docs_read` | Offline Manual + Scripting Reference + docs of the installed packages (SQLite FTS5) |
 | `unity_docs_install` | Background download + indexing of the offline documentation |
@@ -145,7 +151,7 @@ detection). Exercised on macOS only so far.
 ## Layout
 
 ```
-packages/opencode-unity/   the plugin (TypeScript, runs on opencode's Bun)
+packages/opencode-unity/   the plugin (TypeScript; runs on Bun in the opencode CLI and on Node in opencode desktop)
 tools/symbol-exporter/     .NET tool (Mono.Cecil) that dumps the API of a set of DLLs
 ```
 

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "../sqlite.ts"
 
 /** Bump when the exporter output or the tables change: cached databases are rebuilt. */
 export const SCHEMA_VERSION = "1"

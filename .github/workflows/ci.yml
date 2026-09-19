@@ -25,3 +25,7 @@ jobs:
       - run: bun run build:exporter
       - run: bun run typecheck
       - run: bun test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun run test:node

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { Database } from "../sqlite.ts"
 import fs from "node:fs"
 
 export const DOCS_SCHEMA_VERSION = "1"

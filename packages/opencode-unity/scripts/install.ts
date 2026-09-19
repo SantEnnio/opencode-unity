@@ -7,6 +7,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { configDir } from "../src/options.ts"
+import { bundle } from "./bundle.ts"
 
 const packageRoot = path.join(import.meta.dir, "..")
 const target = configDir()
@@ -29,18 +30,6 @@ if (!fs.existsSync(path.join(exporter, "symbol-exporter.dll"))) {
     stderr: "inherit",
   })
   if (build.exitCode !== 0) throw new Error("dotnet publish failed: is the .NET SDK installed?")
-}
-
-async function bundle(entry: string, outFile: string) {
-  const result = await Bun.build({
-    entrypoints: [path.join(packageRoot, entry)],
-    target: "bun",
-    // Resolved from opencode's own install so tool schemas share its zod instance.
-    external: ["@opencode-ai/plugin"],
-  })
-  if (!result.success) throw new AggregateError(result.logs, `bundling ${entry} failed`)
-  fs.mkdirSync(path.dirname(outFile), { recursive: true })
-  await Bun.write(outFile, await result.outputs[0]!.text())
 }
 
 await bundle("src/index.ts", pluginFile)

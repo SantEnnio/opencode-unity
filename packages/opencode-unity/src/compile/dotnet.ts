@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { type Diagnostic, parseDiagnostics, toProjectPath } from "./diagnostics.ts"
+import { run } from "../runtime.ts"
 import { buildEntryPoints, listProjectFiles, reconcile, renderTargets } from "./reconcile.ts"
 
 export type CompileResult =
@@ -20,45 +21,6 @@ const BUILD_ENV = {
   DOTNET_NOLOGO: "1",
   DOTNET_CLI_TELEMETRY_OPTOUT: "1",
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1",
-}
-
-async function killTree(proc: Bun.Subprocess) {
-  if (process.platform === "win32") {
-    // MSBuild spawns worker nodes: a plain kill would leave them holding locks on Temp/obj.
-    await Bun.spawn(["taskkill", "/pid", String(proc.pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" }).exited
-  } else {
-    proc.kill("SIGKILL")
-  }
-}
-
-async function run(args: string[], cwd: string, options: CompileOptions): Promise<{ exitCode: number; output: string }> {
-  const proc = Bun.spawn(["dotnet", ...args], {
-    cwd,
-    env: { ...process.env, ...BUILD_ENV },
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    void killTree(proc)
-  }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-  const onAbort = () => void killTree(proc)
-  options.signal?.addEventListener("abort", onAbort, { once: true })
-
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    if (timedOut) throw new Error(`dotnet build timed out after ${(options.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000}s`)
-    return { exitCode, output: `${stdout}\n${stderr}` }
-  } finally {
-    clearTimeout(timer)
-    options.signal?.removeEventListener("abort", onAbort)
-  }
 }
 
 /**
@@ -90,7 +52,13 @@ export async function compileWithDotnet(projectRoot: string, options: CompileOpt
   for (const project of buildEntryPoints(projects)) {
     let result: { exitCode: number; output: string }
     try {
-      result = await run(["build", project.path, ...args], projectRoot, options)
+      const build = await run(["dotnet", "build", project.path, ...args], {
+        cwd: projectRoot,
+        env: BUILD_ENV,
+        timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        signal: options.signal,
+      })
+      result = { exitCode: build.exitCode, output: `${build.stdout}\n${build.stderr}` }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const missing = /ENOENT|not found|No such file/i.test(message)

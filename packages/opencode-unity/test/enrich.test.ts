@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import { Database } from "../src/sqlite.ts"
 import { describe, expect, test } from "bun:test"
 import type { Diagnostic } from "../src/compile/diagnostics.ts"
 import { calleeAt, declaredType, Enricher, similarity, splitSymbol } from "../src/enrich.ts"

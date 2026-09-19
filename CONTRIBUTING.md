@@ -5,6 +5,7 @@ cd packages/opencode-unity
 bun install
 bun run build:exporter   # needs the .NET SDK
 bun test
+bun run test:node       # the bundle on plain Node
 bun run typecheck
 ```
 
@@ -12,6 +13,8 @@ A few things that are easy to get wrong:
 
 - `src/index.ts` must export the plugin function and nothing else: opencode calls every export
   of a plugin module as a plugin.
+- opencode desktop runs plugins on Node (Electron), the CLI on Bun. Nothing under `src/` may use
+  Bun-only APIs: go through `src/runtime.ts` and `src/sqlite.ts`, and run `bun run test:node`.
 - Everything the model reads (tool descriptions, reports, hints) is written for a small model:
   short, imperative, and ending with the exact next step. Longer is not better.
 - Prefer enforcing a rule in a hook over describing it in the rules block.

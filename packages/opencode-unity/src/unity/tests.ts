@@ -1,7 +1,8 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { editorCommand, editorConnected, editorHasProjectOpen, findUnityCli, type RunOptions, spawnCaptured } from "./cli.ts"
+import { run, type RunOptions } from "../runtime.ts"
+import { editorCommand, editorConnected, editorHasProjectOpen, findUnityCli } from "./cli.ts"
 import { findEditor, findEditorExecutable, type UnityProject } from "./discovery.ts"
 import { parseNUnit, renderTests, type TestSummary } from "./nunit.ts"
 
@@ -49,7 +50,7 @@ export async function runTests(project: UnityProject, mode: TestMode, filter: st
     if (cli) {
       const args = ["test", project.root, "--mode", mode, "--output", results, "--timeout", String(Math.floor(timeoutMs / 1000))]
       if (filter) args.push("--filter", filter)
-      await spawnCaptured([cli, ...args], { ...options, timeoutMs: timeoutMs + 30_000, env: { UNITY_NO_BANNER: "1", UNITY_NON_INTERACTIVE: "1" } })
+      await run([cli, ...args], { ...options, timeoutMs: timeoutMs + 30_000, env: { UNITY_NO_BANNER: "1", UNITY_NON_INTERACTIVE: "1" } })
     } else {
       const editor = findEditor(project.version, { editorPath })
       const executable = editor ? findEditorExecutable(editor.root) : null
@@ -57,7 +58,7 @@ export async function runTests(project: UnityProject, mode: TestMode, filter: st
       // No -quit: with -runTests it makes the Editor exit before the tests finish.
       const args = ["-batchmode", "-nographics", "-projectPath", project.root, "-runTests", "-testPlatform", mode, "-testResults", results, "-logFile", `${results}.log`]
       if (filter) args.push("-testFilter", filter)
-      await spawnCaptured([executable, ...args], { ...options, timeoutMs })
+      await run([executable, ...args], { ...options, timeoutMs })
     }
     if (!fs.existsSync(results)) return "[unity] The test run produced no results file: the project probably has compile errors. Run unity_compile first."
     return renderTests(parseNUnit(fs.readFileSync(results, "utf8")))
