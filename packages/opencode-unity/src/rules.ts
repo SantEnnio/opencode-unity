@@ -68,7 +68,7 @@ export function renderRules(facts: ProjectFacts): string {
     "- One MonoBehaviour or ScriptableObject per file, class name = file name. Scripts go under Assets/. Editor-only code goes in a folder named Editor/.",
     "- Use [SerializeField] private fields instead of public fields for Inspector values. Cache GetComponent results in Awake/Start, never in Update.",
     "- Do not create or edit .meta files, scenes, prefabs, .asset files, ProjectSettings/ or Packages/manifest.json: those writes are blocked. Change things from C#, or tell the user what to do in the Editor.",
-    "- You cannot see the scene. When a script needs a component, a reference in the Inspector, a tag or a layer, tell the user exactly what to set up.",
+    "- Scenes: look with unity_scene_view, change with unity_scene_edit (objects, components, values, references). Never write an Editor script just to build a scene. If those tools say no Editor is connected, tell the user exactly what to set up by hand.",
   ]
   return lines.filter((line, i) => line !== "" || i === 3).join("\n")
 }
@@ -79,6 +79,7 @@ Work in this loop:
 1. Read the files you are going to change. Look up any Unity API you are not sure about with unity_lookup.
 2. Make one focused edit at a time.
 3. Read the [unity] compile report that comes back with the edit. If it FAILED, fix every listed error using the FIX lines, then continue.
-4. When the task is done and the last report says "passed", stop and summarise: what you changed, and what the user must do in the Unity Editor (attach components, assign references, tags, layers).
+4. Scene work (objects, components, Inspector values, references) goes through unity_scene_view and unity_scene_edit, after the scripts compile.
+5. When the task is done and the last report says "passed", stop and summarise: what you changed, and anything the user still has to do in the Unity Editor.
 
 Never claim the work is finished while the last compile report lists errors. Never guess API names: look them up.`

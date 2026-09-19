@@ -1,11 +1,12 @@
-// Wrapper around the official Unity CLI (`unity`). It is the only supported way to talk to an
-// Editor that has the project open (through the Pipeline package); without it the plugin falls
-// back to launching the Editor in batch mode, which only works while the project is closed.
+// The official Unity CLI (`unity`) drives the closed-Editor routes (tests, headless runs). An
+// open Editor is reached through the Pipeline package's HTTP server directly (see pipeline.ts):
+// same API the CLI uses, without paying a process start per call.
 
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { run, type RunOptions, runSync, which } from "../runtime.ts"
+import { pipelineConnected, pipelineExec } from "./pipeline.ts"
 
 export type CliJson = { success: boolean; data: unknown; errors: { code: string; message: string }[] }
 export type { RunOptions }
@@ -42,27 +43,28 @@ async function cliJson(cli: string, args: string[], options: RunOptions): Promis
   return parseCliJson(result.stdout) ?? { success: false, data: null, errors: [{ code: "NO_JSON", message: (result.stderr || result.stdout).trim().slice(-400) }] }
 }
 
-const samePath = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
-
-/** True when an Editor with the Pipeline package has this project open and answers on its port. */
-export async function editorConnected(projectRoot: string, options: RunOptions = {}): Promise<boolean> {
-  const cli = findUnityCli()
-  if (!cli) return false
-  const status = await cliJson(cli, ["status"], { timeoutMs: 10_000, ...options })
-  const instances = (status.data as { instances?: Record<string, unknown>[] } | null)?.instances ?? []
-  return instances.some((instance) => Object.values(instance).some((v) => typeof v === "string" && samePath(v, projectRoot)))
+/** True when an Editor with the Pipeline package has this project open and its server is up. */
+export async function editorConnected(projectRoot: string, _options: RunOptions = {}): Promise<boolean> {
+  return pipelineConnected(projectRoot)
 }
 
-/** Runs a Pipeline command inside the open Editor. Arguments are passed as --key value. */
-export async function editorCommand(projectRoot: string, name: string, args: Record<string, string | number | boolean> = {}, options: RunOptions = {}): Promise<CliJson> {
-  const cli = findUnityCli()
-  if (!cli) return { success: false, data: null, errors: [{ code: "NO_CLI", message: "Unity CLI not installed" }] }
-  const flat = Object.entries(args).flatMap(([key, value]) => [`--${key}`, String(value)])
-  const timeout = Math.ceil((options.timeoutMs ?? 30_000) / 1000)
-  return cliJson(cli, ["command", name, "--project-path", projectRoot, "--timeout", String(timeout), ...(flat.length > 0 ? ["--", ...flat] : [])], {
-    timeoutMs: (options.timeoutMs ?? 30_000) + 5_000,
-    signal: options.signal,
-  })
+/** Runs a Pipeline command inside the open Editor. */
+export function editorCommand(projectRoot: string, name: string, args: Record<string, unknown> = {}, options: RunOptions = {}): Promise<CliJson> {
+  return pipelineExec(projectRoot, name, args, options)
+}
+
+/** Unwraps a Pipeline command response: the payload sits in data.result, sometimes as JSON text. */
+export function commandResult(response: CliJson): { ok: true; result: unknown } | { ok: false; error: string } {
+  if (!response.success) return { ok: false, error: response.errors[0]?.message ?? "unknown error" }
+  const result = (response.data as { result?: unknown } | null)?.result
+  if (typeof result === "string" && /^[[{]/.test(result)) {
+    try {
+      return { ok: true, result: JSON.parse(result) }
+    } catch {
+      // plain text after all
+    }
+  }
+  return { ok: true, result }
 }
 
 /**

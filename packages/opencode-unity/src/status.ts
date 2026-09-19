@@ -43,6 +43,20 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
       ? "downloading / indexing"
       : "not installed (unity_docs_install)"
 
+  let pipelinePackage = false
+  try {
+    pipelinePackage = "com.unity.pipeline" in (JSON.parse(fs.readFileSync(path.join(project.root, "Packages", "manifest.json"), "utf8")).dependencies ?? {})
+  } catch {
+    // no manifest: treat as not installed
+  }
+  const pipeline = connected
+    ? "connected"
+    : pipelinePackage
+      ? open
+        ? "installed, but its server is not answering (in Unity: Pipeline > Start Server)"
+        : "installed; open the project in Unity to use it"
+      : "NOT INSTALLED. It enables scene editing, the Console, tests and Unity's own compiler in the open Editor. To add it the user runs, in the project folder: unity pipeline install"
+
   const yes = (value: boolean) => (value ? "yes" : "no")
   return [
     `opencode-unity ${VERSION}: ACTIVE`,
@@ -54,12 +68,14 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
     `API index        ${fs.existsSync(symbols) ? "ready" : "not built yet (built on first use)"}`,
     `Documentation    ${docsStream(project.version)}: ${docs}`,
     `Unity CLI        ${findUnityCli() ?? "not installed"}`,
-    `Editor open      ${yes(open)}${open ? `, Pipeline connected: ${yes(connected)}` : ""}`,
+    `Editor open      ${yes(open)}`,
+    `Pipeline package ${pipeline}`,
     "",
     `Compile on edit  ${onEdit}`,
     `unity_compile    ${connected ? "Unity Editor recompile (Pipeline)" : projects > 0 && dotnet ? "dotnet build" : open ? "UNAVAILABLE while the Editor is open without the Pipeline package" : "Unity batch mode"}`,
     `unity_test       ${connected ? "in the open Editor (Pipeline)" : open ? "UNAVAILABLE while the Editor is open without the Pipeline package" : "Unity CLI / batch mode"}`,
-    `unity_console    ${connected ? "available" : "needs the Pipeline package in an open Editor (`unity pipeline install`)"}`,
+    `unity_console    ${connected ? "available" : "needs the Pipeline package in an open Editor"}`,
+    `Scene editing    ${connected ? "available (unity_scene_view, unity_scene_edit)" : "needs the Pipeline package in an open Editor"}`,
     `Lints ${options.lint === false ? "off" : "on"}, guards on${options.allow?.length ? ` (allowed: ${options.allow.join(", ")})` : ""}, idle gate ${options.idleGate === false ? "off" : "on"}, rules ${options.rules === false ? "off" : "on"}`,
   ].join("\n")
 }

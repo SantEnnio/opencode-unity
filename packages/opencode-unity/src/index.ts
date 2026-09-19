@@ -4,7 +4,7 @@ import path from "node:path"
 import { toProjectPath } from "./compile/diagnostics.ts"
 import { type CompileResult, compileWithDotnet } from "./compile/dotnet.ts"
 import { compileInBatchMode, compileInOpenEditor } from "./compile/editor.ts"
-import { listProjectFiles } from "./compile/reconcile.ts"
+import { listProjectFiles, walkScripts } from "./compile/reconcile.ts"
 import { docsDbPath, docsInstalled, docsInstalling, docsStream, indexPackageDocs, installDocs } from "./docs/install.ts"
 import { DocsStore } from "./docs/store.ts"
 import { Enricher, type SourceReader } from "./enrich.ts"
@@ -19,7 +19,8 @@ import { renderReport } from "./report.ts"
 import { AGENT_PROMPT, projectFacts, renderRules } from "./rules.ts"
 import { renderStatus, startupLine } from "./status.ts"
 import { run as runProcess } from "./runtime.ts"
-import { editorCommand, editorConnected, editorHasProjectOpen } from "./unity/cli.ts"
+import { editScene, type PipelineCall, type SceneOp, viewScene } from "./scene.ts"
+import { commandResult, editorCommand, editorConnected, editorHasProjectOpen } from "./unity/cli.ts"
 import { cacheDir, findEditor, findEditorExecutable, loadProject, type UnityProject } from "./unity/discovery.ts"
 import { runTests } from "./unity/tests.ts"
 import { writtenPaths } from "./written-paths.ts"
@@ -202,6 +203,14 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
     return next
   }
 
+  const NO_EDITOR =
+    "[unity] Scenes are edited through the open Unity Editor, and no Editor with the Pipeline package is connected for this project. Tell the user: open the project in Unity and, once, run `unity pipeline install` in the project folder (needs the Unity CLI). Do NOT write an Editor script to build the scene instead, and do not edit the .unity file."
+
+  const pipeline =
+    (project: UnityProject, signal?: AbortSignal): PipelineCall =>
+    async (command, params = {}) =>
+      commandResult(await editorCommand(project.root, command, params, { signal, timeoutMs: 60_000 }))
+
   // Say so once: a plugin that works silently looks exactly like one that never loaded.
   void log("info", startupLine(startupProject))
   void client.tui
@@ -349,6 +358,45 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
           if (docsInstalled(project.version)) return `The Unity ${docsStream(project.version)} documentation is already installed.`
           if (!docsInstalling(project.version)) startDocsInstall(project)
           return `Started downloading the Unity ${docsStream(project.version)} documentation in the background. unity_docs_search will use it as soon as it is ready (usually a few minutes).`
+        },
+      }),
+
+      unity_scene_view: tool({
+        description:
+          "Look at the scene that is open in the Unity Editor. Without arguments: the hierarchy as a tree with each object's components. With a path: every component of that object and its current values. Always look before editing.",
+        args: { path: tool.schema.string().optional().describe('Hierarchy path of one object, e.g. "/Player/Gun". Omit for the whole scene.') },
+        async execute(args, context) {
+          const project = projectAt(context.directory)
+          if (!(await editorConnected(project.root, { signal: context.abort }))) return NO_EDITOR
+          return viewScene(pipeline(project, context.abort), args.path)
+        },
+      }),
+
+      unity_scene_edit: tool({
+        description: [
+          "Create and change objects in the scene open in the Unity Editor. Use this instead of writing Editor scripts or editing .unity files.",
+          "All operations are checked first and applied together: if one is wrong nothing changes. The user can undo the whole call with Ctrl+Z.",
+          "Operations (objects are addressed by hierarchy path, e.g. \"/Player/Gun\"):",
+          '- {"op":"create","name":"Player","primitive":"capsule","position":[0,1,0],"tag":"Player","components":["Rigidbody","PlayerController"]}  (primitive: cube sphere capsule cylinder plane quad, or omit for empty; "parent":"/Path" to nest)',
+          '- {"op":"set","target":"/Player","component":"Rigidbody","values":{"mass":2,"useGravity":false}}  (object references: "/Other/Object" or "Assets/Materials/Red.mat"; vectors [x,y,z]; colors [r,g,b,a])',
+          '- {"op":"add_component","target":"/Player","type":"BoxCollider","values":{"isTrigger":true}}',
+          '- {"op":"modify","target":"/Player","position":[0,2,0],"rotation":[0,90,0],"scale":[1,1,1],"tag":"Player","layer":"Default","active":true,"parent":"/World","name":"Hero"}',
+          '- {"op":"remove_component","target":"/Player","type":"BoxCollider"}   - {"op":"delete","target":"/Old"}   - {"op":"instantiate","prefab":"Assets/Prefabs/Enemy.prefab","name":"Enemy1","position":[3,0,0]}',
+          "Your own scripts can be added as components only after their .cs file exists and the compile report passed.",
+        ].join("\n"),
+        args: {
+          operations: tool.schema.array(tool.schema.record(tool.schema.string(), tool.schema.any())).min(1).max(60).describe("Ordered list of operations, see the description"),
+          save: tool.schema.boolean().optional().describe("Save the scene afterwards (default false: the user reviews first)"),
+          dry_run: tool.schema.boolean().optional().describe("Only validate, change nothing"),
+        },
+        async execute(args, context) {
+          const project = projectAt(context.directory)
+          if (!(await editorConnected(project.root, { signal: context.abort }))) return NO_EDITOR
+          const scripts = new Set([...walkScripts(path.join(project.root, "Assets"))].map((file) => path.basename(file, ".cs")))
+          return editScene(
+            { graph: await graphFor(project), scripts, call: pipeline(project, context.abort) },
+            { operations: args.operations as SceneOp[], save: args.save, dryRun: args.dry_run },
+          )
         },
       }),
 

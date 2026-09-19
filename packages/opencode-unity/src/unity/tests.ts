@@ -2,27 +2,31 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { run, type RunOptions } from "../runtime.ts"
-import { editorCommand, editorConnected, editorHasProjectOpen, findUnityCli } from "./cli.ts"
+import { commandResult, editorCommand, editorConnected, editorHasProjectOpen, findUnityCli } from "./cli.ts"
 import { findEditor, findEditorExecutable, type UnityProject } from "./discovery.ts"
 import { parseNUnit, renderTests, type TestSummary } from "./nunit.ts"
 
 export type TestMode = "EditMode" | "PlayMode"
 
-type PipelineTests = {
-  Summary?: { Total?: number; Passed?: number; Failed?: number; Skipped?: number; Inconclusive?: number }
-  Results?: { FullName?: string; Status?: string; Message?: string; StackTrace?: string }[]
+type PipelineResult = { FullName?: string; Status?: string; Message?: string | null; StackTrace?: string | null }
+type PipelineStatus = {
+  status?: string
+  summary?: { total?: number; passed?: number; failed?: number; skipped?: number; inconclusive?: number }
+  results?: PipelineResult[]
 }
 
-function fromPipeline(result: PipelineTests): TestSummary {
-  const s = result.Summary ?? {}
+const POLL_MS = 1_500
+
+function fromPipeline(status: PipelineStatus): TestSummary {
+  const s = status.summary ?? {}
   return {
-    total: s.Total ?? 0,
-    passed: s.Passed ?? 0,
-    failed: s.Failed ?? 0,
-    skipped: (s.Skipped ?? 0) + (s.Inconclusive ?? 0),
-    failures: (result.Results ?? [])
+    total: s.total ?? 0,
+    passed: s.passed ?? 0,
+    failed: s.failed ?? 0,
+    skipped: (s.skipped ?? 0) + (s.inconclusive ?? 0),
+    failures: (status.results ?? [])
       .filter((r) => /fail|error/i.test(r.Status ?? ""))
-      .map((r) => ({ name: r.FullName ?? "?", message: r.Message ?? "", stack: (r.StackTrace ?? "").split("\n").slice(0, 4).join("\n") })),
+      .map((r) => ({ name: r.FullName ?? "?", message: (r.Message ?? "").trim(), stack: (r.StackTrace ?? "").trim().split("\n").slice(0, 4).join("\n") })),
   }
 }
 
@@ -31,13 +35,33 @@ export async function runTests(project: UnityProject, mode: TestMode, filter: st
   const timeoutMs = options.timeoutMs ?? 900_000
 
   if (await editorConnected(project.root, options)) {
-    const args: Record<string, string | number> = { mode: mode === "EditMode" ? "editor" : "playmode", timeout: Math.floor(timeoutMs / 1000) }
+    // Unity asks "save modified scenes?" before an EditMode/PlayMode run. Nobody is there to answer
+    // that modal, and it freezes the Editor (and every later command) until it is dismissed.
+    const scene = commandResult(await editorCommand(project.root, "get_scene_hierarchy", {}, { timeoutMs: 15_000 }))
+    if (scene.ok && (scene.result as { isDirty?: boolean } | null)?.isDirty) {
+      return "[unity] Tests not started: the open scene has unsaved changes, and Unity would block on a \"save scene?\" dialog. Save it first (unity_scene_edit with save: true, or ask the user to press Ctrl/Cmd+S), then run unity_test again."
+    }
+
+    // Always asynchronous: the package's synchronous mode waits on the main thread for a test
+    // run that needs that same thread, and the Editor never comes back.
+    const args: Record<string, unknown> = { mode: mode === "EditMode" ? "editor" : "playmode", async_tests: true, timeout: Math.floor(timeoutMs / 1000) }
     if (filter) args.filter = filter
-    const response = await editorCommand(project.root, "run_tests", args, { ...options, timeoutMs })
-    if (!response.success) return `[unity] Tests could not run in the open Editor: ${response.errors[0]?.message ?? "unknown error"}`
-    const result = (response.data as { result?: PipelineTests | string } | null)?.result
-    const parsed = typeof result === "string" ? (JSON.parse(result) as PipelineTests) : (result ?? {})
-    return renderTests(fromPipeline(parsed))
+    const started = await editorCommand(project.root, "run_tests", args, options)
+    if (!started.success) return `[unity] Tests could not run in the open Editor: ${started.errors[0]?.message ?? "unknown error"}`
+
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+      if (options.signal?.aborted) {
+        await editorCommand(project.root, "cancel_tests", {}, { timeoutMs: 10_000 })
+        return "[unity] Test run cancelled."
+      }
+      const poll = commandResult(await editorCommand(project.root, "test_status", {}, { timeoutMs: 15_000 }))
+      const status = poll.ok ? (poll.result as PipelineStatus | null) : null
+      if (status?.status && status.status !== "running") return renderTests(fromPipeline(status))
+    }
+    await editorCommand(project.root, "cancel_tests", {}, { timeoutMs: 10_000 })
+    return `[unity] Tests did not finish within ${Math.round(timeoutMs / 1000)} s and were cancelled.`
   }
 
   if (editorHasProjectOpen(project.root)) {

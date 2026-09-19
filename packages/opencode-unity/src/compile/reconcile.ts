@@ -56,7 +56,7 @@ export function buildEntryPoints(projects: ProjectFile[]): ProjectFile[] {
   return roots.length > 0 ? roots : projects
 }
 
-function* walkScripts(dir: string): Generator<string> {
+export function* walkScripts(dir: string): Generator<string> {
   let entries: fs.Dirent[]
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true })
