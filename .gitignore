@@ -1,0 +1,14 @@
+node_modules/
+bin/
+obj/
+*.tsbuildinfo
+.DS_Store
+
+# published by `bun run build:exporter`, shipped in the npm package but not committed
+packages/opencode-unity/bin/
+
+# throwaway Unity project copies used to try the plugin
+sandbox/
+
+# copied from the repo root by prepack
+packages/opencode-unity/README.md
