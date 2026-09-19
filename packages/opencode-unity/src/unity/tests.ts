@@ -65,7 +65,7 @@ export async function runTests(project: UnityProject, mode: TestMode, filter: st
   }
 
   if (editorHasProjectOpen(project.root)) {
-    return "[unity] The Unity Editor has this project open, so tests cannot run from the command line. Ask the user to either run them in Window > General > Test Runner, install the Pipeline package (`unity pipeline install`) so the open Editor can be driven, or close the Editor."
+    return "[unity] The Unity Editor has this project open, so tests cannot run from the command line. Ask the user to either run them in Window > General > Test Runner, install the Pipeline package (unity_pipeline_install) so the open Editor can be driven, or close the Editor."
   }
 
   const results = path.join(os.tmpdir(), `opencode-unity-tests-${process.pid}-${Date.now()}.xml`)

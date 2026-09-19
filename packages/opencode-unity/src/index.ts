@@ -20,7 +20,7 @@ import { AGENT_PROMPT, projectFacts, renderRules } from "./rules.ts"
 import { renderStatus, startupLine } from "./status.ts"
 import { run as runProcess } from "./runtime.ts"
 import { editScene, type PipelineCall, type SceneOp, viewScene } from "./scene.ts"
-import { commandResult, editorCommand, editorConnected, editorHasProjectOpen } from "./unity/cli.ts"
+import { commandResult, editorCommand, editorConnected, editorHasProjectOpen, findUnityCli } from "./unity/cli.ts"
 import { cacheDir, findEditor, findEditorExecutable, loadProject, type UnityProject } from "./unity/discovery.ts"
 import { runTests } from "./unity/tests.ts"
 import { writtenPaths } from "./written-paths.ts"
@@ -204,7 +204,9 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
   }
 
   const NO_EDITOR =
-    "[unity] Scenes are edited through the open Unity Editor, and no Editor with the Pipeline package is connected for this project. Tell the user: open the project in Unity and, once, run `unity pipeline install` in the project folder (needs the Unity CLI). Do NOT write an Editor script to build the scene instead, and do not edit the .unity file."
+    "[unity] This works through the open Unity Editor, and no Editor with the Pipeline package is connected for this project. Call unity_status to see what is missing. If the package is not installed, ask the user whether to install it, then call unity_pipeline_install. If it is installed, ask the user to open the project in Unity. Do NOT write an Editor script to build the scene instead, and do not edit the .unity file."
+
+  const PIPELINE_WAIT_MS = 120_000
 
   const pipeline =
     (project: UnityProject, signal?: AbortSignal): PipelineCall =>
@@ -361,6 +363,51 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
         },
       }),
 
+      unity_pipeline_install: tool({
+        description:
+          "Install Unity's Pipeline package (com.unity.pipeline) into this project. It is what lets you edit scenes, read the Editor Console, run tests and compile inside the open Editor. It changes Packages/manifest.json, so the user is asked to approve. Call it when unity_status says the package is not installed and the user wants those features.",
+        args: {},
+        async execute(_args, context) {
+          const project = projectAt(context.directory)
+          if (await editorConnected(project.root)) return "[unity] The Pipeline package is already installed and connected. Nothing to do."
+
+          const cli = findUnityCli()
+          if (!cli) {
+            return "[unity] The Unity CLI (`unity`) is not installed, and it is what installs the package. Tell the user to install the Unity CLI, or to add the package in the Editor: Window > Package Manager > + > Install package by name > com.unity.pipeline."
+          }
+
+          try {
+            await context.ask({
+              permission: "unity_pipeline_install",
+              patterns: [project.root],
+              always: [project.root],
+              metadata: { package: "com.unity.pipeline", changes: "Packages/manifest.json", project: project.root },
+            })
+          } catch {
+            return "[unity] The user did not approve installing the Pipeline package. Do not try again unless they ask."
+          }
+
+          const result = await runProcess([cli, "pipeline", "install", "--project-path", project.root], {
+            timeoutMs: 180_000,
+            signal: context.abort,
+            env: { UNITY_NO_BANNER: "1", UNITY_NON_INTERACTIVE: "1", UNITY_NO_PAGER: "1" },
+          })
+          if (result.exitCode !== 0) return `[unity] Installing the Pipeline package failed:\n${(result.stderr || result.stdout).trim().split(/\r?\n/).slice(-8).join("\n")}`
+
+          if (!editorHasProjectOpen(project.root)) {
+            return "[unity] Pipeline package added to Packages/manifest.json. Ask the user to open the project in Unity: the package is imported on startup, then scene editing, Console and tests become available (check with unity_status)."
+          }
+
+          // The open Editor imports the package when it next refreshes, which needs its window focused.
+          const deadline = Date.now() + PIPELINE_WAIT_MS
+          while (Date.now() < deadline && !context.abort.aborted) {
+            if (await editorConnected(project.root)) return "[unity] Pipeline package installed and connected. unity_scene_view, unity_scene_edit, unity_console and unity_test now work through the open Editor."
+            await new Promise((resolve) => setTimeout(resolve, 3_000))
+          }
+          return "[unity] Pipeline package added to Packages/manifest.json, but the open Editor has not loaded it yet. Ask the user to click on the Unity window so it imports the package, then check with unity_status."
+        },
+      }),
+
       unity_scene_view: tool({
         description:
           "Look at the scene that is open in the Unity Editor. Without arguments: the hierarchy as a tree with each object's components. With a path: every component of that object and its current values. Always look before editing.",
@@ -422,7 +469,7 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
         async execute(args, context) {
           const project = projectAt(context.directory)
           if (!(await editorConnected(project.root, { signal: context.abort }))) {
-            return "[unity] No Unity Editor with the Pipeline package is connected for this project, so its Console cannot be read. Ask the user to paste the Console output, or to run `unity pipeline install` in the project and reopen it."
+            return `${NO_EDITOR} Meanwhile, ask the user to paste the Console output.`
           }
           const response = await editorCommand(project.root, "console", { level: args.level ?? "error", tail: args.count ?? 15 }, { signal: context.abort })
           if (!response.success) return `[unity] Console could not be read: ${response.errors[0]?.message ?? "unknown error"}`

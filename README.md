@@ -84,6 +84,7 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
 | `unity_docs_search` / `unity_docs_read` | Offline Manual + Scripting Reference + docs of the installed packages (SQLite FTS5) |
 | `unity_docs_install` | Background download + indexing of the offline documentation |
 | `unity_scene_view` / `unity_scene_edit` | Read and change the open scene through the Editor: objects, components, values, references. Validated first, applied as one transaction and one Undo step |
+| `unity_pipeline_install` | Adds the Pipeline package to the project, after the user approves the permission prompt |
 | `unity_compile` | Explicit check. Uses Unity's own compiler when it can (see below) |
 | `unity_test` | EditMode/PlayMode tests, failures only |
 | `unity_console` | Console of the open Editor (runtime errors, stack traces) |
@@ -99,14 +100,13 @@ A model that cannot touch the scene ends up writing throwaway Editor scripts tha
 worse, editing the `.unity` YAML by hand. The plugin blocks the YAML and gives it a real tool
 instead, by talking to the Editor you already have open.
 
-This needs Unity's **Pipeline package** (`com.unity.pipeline`, experimental) in the project. With
-the official Unity CLI installed it is one command, run in the project folder:
+This needs Unity's **Pipeline package** (`com.unity.pipeline`, experimental) in the project. Just
+ask the agent ("install the Pipeline package"): it calls `unity_pipeline_install`, opencode shows a
+permission prompt, and only after you approve does the tool run `unity pipeline install` for the
+project (it needs the official Unity CLI). Or run that command yourself in the project folder.
 
-```sh
-unity pipeline install
-```
-
-The plugin never runs it for you: it changes `Packages/manifest.json`. `/unity` tells you whether
+The package is never installed without that approval: it changes `Packages/manifest.json`. If the
+Editor is open, click its window afterwards so it imports the package. `/unity` tells you whether
 the package is installed and connected. Once it is, the plugin talks to the package's local HTTP
 server directly (loopback only, token from `Library/Pipeline/`), so calls take milliseconds.
 

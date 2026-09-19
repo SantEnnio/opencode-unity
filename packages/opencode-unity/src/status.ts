@@ -55,7 +55,7 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
       ? open
         ? "installed, but its server is not answering (in Unity: Pipeline > Start Server)"
         : "installed; open the project in Unity to use it"
-      : "NOT INSTALLED. It enables scene editing, the Console, tests and Unity's own compiler in the open Editor. To add it the user runs, in the project folder: unity pipeline install"
+      : "NOT INSTALLED. It enables scene editing, the Console, tests and Unity's own compiler in the open Editor. If the user wants them, call unity_pipeline_install (they will be asked to approve)."
 
   const yes = (value: boolean) => (value ? "yes" : "no")
   return [
