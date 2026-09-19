@@ -126,13 +126,20 @@ would type: `mass`, not `m_Mass`).
 ] }
 ```
 
-Operations: `create`, `modify` (transform, tag, layer, active, parent, name), `add_component`,
+Operations: `create`, `modify` (transform, color, tag, layer, active, parent, name), `add_component`,
 `remove_component`, `set`, `delete`, `instantiate` (prefab). Objects are addressed by hierarchy
 path. Object-reference fields accept a scene path (`"/Player"`, resolved to the field's type:
-Transform, Rigidbody, GameObject...) or an asset path (`"Assets/Materials/Red.mat"`).
+Transform, Rigidbody, GameObject...) or an asset path (`"Assets/Materials/Red.mat"`). `"color"`
+on `create`/`modify` (`[r, g, b]` or `"#RRGGBB"`) writes a material for that object under
+`Assets/Materials/` and assigns it, so a model can block out a scene without knowing shaders.
 
 What makes it safe for a small model:
 
+- **The shape is forgiving.** Small models get the nesting wrong far more often than the content
+  (`{"create": {...}}`, `{"op": {"create": {...}}}`, a transform sent as `set`, vectors as
+  `{x, y, z}`, colors as 0-255). All of these are understood instead of rejected, and the schema
+  the model sees spells out every field. This came from a real session in which ten calls in a row
+  failed on nesting alone; those inputs are now regression tests.
 - **Everything is validated before the scene is touched**, and every problem is reported at once,
   with the fix: unknown component (`RigidBody` → did you mean `Rigidbody`), unknown property (with
   the list of real ones), missing object (closest paths), tag or layer that does not exist,

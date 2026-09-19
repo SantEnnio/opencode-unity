@@ -19,7 +19,7 @@ import { renderReport } from "./report.ts"
 import { AGENT_PROMPT, projectFacts, renderRules } from "./rules.ts"
 import { renderStatus, startupLine } from "./status.ts"
 import { run as runProcess } from "./runtime.ts"
-import { editScene, type PipelineCall, type SceneOp, viewScene } from "./scene.ts"
+import { editScene, type PipelineCall, viewScene } from "./scene.ts"
 import { commandResult, editorCommand, editorConnected, editorHasProjectOpen, findUnityCli } from "./unity/cli.ts"
 import { cacheDir, findEditor, findEditorExecutable, loadProject, type UnityProject } from "./unity/discovery.ts"
 import { runTests } from "./unity/tests.ts"
@@ -207,6 +207,26 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
     "[unity] This works through the open Unity Editor, and no Editor with the Pipeline package is connected for this project. Call unity_status to see what is missing. If the package is not installed, ask the user whether to install it, then call unity_pipeline_install. If it is installed, ask the user to open the project in Unity. Do NOT write an Editor script to build the scene instead, and do not edit the .unity file."
 
   const PIPELINE_WAIT_MS = 120_000
+
+  // A small model that gets an error sometimes resends the identical call, forever. Repeating a
+  // failed call cannot succeed, so the answer escalates until it tells the model to stop.
+  const repeats = new Map<string, { input: string; count: number }>()
+  function breakLoop(sessionID: string, toolName: string, input: unknown, output: string, failed: boolean): string {
+    const key = `${sessionID}:${toolName}`
+    const text = JSON.stringify(input)
+    const previous = repeats.get(key)
+    if (!failed) {
+      repeats.delete(key)
+      return output
+    }
+    const count = previous?.input === text ? previous.count + 1 : 1
+    repeats.set(key, { input: text, count })
+    if (count === 2) return `${output}\n\nYou sent EXACTLY the same call as last time, so it failed for the same reason. Change the call before trying again.`
+    if (count >= 3) {
+      return `[unity] STOP. This exact call has now failed ${count} times in a row and will fail every time. Do not call ${toolName} again in this turn. Tell the user, in plain words, what you were trying to do and the error below, and wait for their answer.\n\n${output}`
+    }
+    return output
+  }
 
   const pipeline =
     (project: UnityProject, signal?: AbortSignal): PipelineCall =>
@@ -423,27 +443,57 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
         description: [
           "Create and change objects in the scene open in the Unity Editor. Use this instead of writing Editor scripts or editing .unity files.",
           "All operations are checked first and applied together: if one is wrong nothing changes. The user can undo the whole call with Ctrl+Z.",
+          "Each operation is ONE FLAT JSON object with a string \"op\". Never nest it: not {\"create\":{...}} and not {\"op\":{...}}.",
           "Operations (objects are addressed by hierarchy path, e.g. \"/Player/Gun\"):",
-          '- {"op":"create","name":"Player","primitive":"capsule","position":[0,1,0],"tag":"Player","components":["Rigidbody","PlayerController"]}  (primitive: cube sphere capsule cylinder plane quad, or omit for empty; "parent":"/Path" to nest)',
+          '- {"op":"create","name":"Player","primitive":"capsule","position":[0,1,0],"color":[0.2,0.4,1],"tag":"Player","components":["Rigidbody","PlayerController"]}  (primitive: cube sphere capsule cylinder plane quad, or omit for empty; "parent":"/Path" to nest; "color" makes and assigns a material)',
           '- {"op":"set","target":"/Player","component":"Rigidbody","values":{"mass":2,"useGravity":false}}  (object references: "/Other/Object" or "Assets/Materials/Red.mat"; vectors [x,y,z]; colors [r,g,b,a])',
           '- {"op":"add_component","target":"/Player","type":"BoxCollider","values":{"isTrigger":true}}',
-          '- {"op":"modify","target":"/Player","position":[0,2,0],"rotation":[0,90,0],"scale":[1,1,1],"tag":"Player","layer":"Default","active":true,"parent":"/World","name":"Hero"}',
+          '- {"op":"modify","target":"/Player","position":[0,2,0],"rotation":[0,90,0],"scale":[1,1,1],"color":"#808080","tag":"Player","layer":"Default","active":true,"parent":"/World","name":"Hero"}',
           '- {"op":"remove_component","target":"/Player","type":"BoxCollider"}   - {"op":"delete","target":"/Old"}   - {"op":"instantiate","prefab":"Assets/Prefabs/Enemy.prefab","name":"Enemy1","position":[3,0,0]}',
           "Your own scripts can be added as components only after their .cs file exists and the compile report passed.",
         ].join("\n"),
         args: {
-          operations: tool.schema.array(tool.schema.record(tool.schema.string(), tool.schema.any())).min(1).max(60).describe("Ordered list of operations, see the description"),
+          operations: tool.schema
+            .array(
+              // Typed so the model sees the fields; loose so a shape mistake still reaches the normalizer.
+              tool.schema.looseObject({
+                // Advertised as a string enum, validated as anything: a nested {"op": {...}} must reach
+                // the normalizer instead of bouncing off schema validation with a generic message.
+                op: tool.schema
+                  .any()
+                  .meta({ type: "string", enum: ["create", "modify", "add_component", "remove_component", "set", "delete", "instantiate"], description: "What to do. A plain string, never an object" }),
+                target: tool.schema.string().optional().describe('Hierarchy path of an existing object, e.g. "/Player/Gun" (all ops except create and instantiate)'),
+                name: tool.schema.string().optional().describe("create/instantiate: name of the new object. modify: new name"),
+                primitive: tool.schema.enum(["cube", "sphere", "capsule", "cylinder", "plane", "quad"]).optional().describe("create: built-in shape. Omit for an empty object"),
+                parent: tool.schema.string().optional().describe('create/modify: hierarchy path of the parent object. "" moves to the scene root'),
+                position: tool.schema.array(tool.schema.number()).optional().describe("[x, y, z] local position"),
+                rotation: tool.schema.array(tool.schema.number()).optional().describe("[x, y, z] Euler angles in degrees"),
+                scale: tool.schema.array(tool.schema.number()).optional().describe("[x, y, z] local scale"),
+                tag: tool.schema.string().optional(),
+                layer: tool.schema.string().optional(),
+                active: tool.schema.boolean().optional(),
+                color: tool.schema.any().optional().meta({ description: 'create/modify: plain color for an object with a MeshRenderer, [r, g, b] from 0 to 1 or "#RRGGBB". A material is created and assigned for you' }),
+                components: tool.schema.array(tool.schema.string()).optional().describe('create: component class names to add, e.g. ["Rigidbody", "PlayerController"]'),
+                type: tool.schema.string().optional().describe("add_component/remove_component: component class name"),
+                component: tool.schema.string().optional().describe("set: component class name whose values are changed"),
+                values: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe('set/add_component: property name -> value, e.g. {"mass": 2, "target": "/Player", "material": "Assets/Materials/Red.mat"}'),
+                prefab: tool.schema.string().optional().describe('instantiate: asset path, e.g. "Assets/Prefabs/Enemy.prefab"'),
+              }),
+            )
+            .min(1)
+            .max(60)
+            .describe('Ordered list of FLAT operation objects, e.g. [{"op":"create","name":"Ground","primitive":"plane","scale":[10,1,10]}]'),
           save: tool.schema.boolean().optional().describe("Save the scene afterwards (default false: the user reviews first)"),
-          dry_run: tool.schema.boolean().optional().describe("Only validate, change nothing"),
         },
         async execute(args, context) {
           const project = projectAt(context.directory)
           if (!(await editorConnected(project.root, { signal: context.abort }))) return NO_EDITOR
           const scripts = new Set([...walkScripts(path.join(project.root, "Assets"))].map((file) => path.basename(file, ".cs")))
-          return editScene(
-            { graph: await graphFor(project), scripts, call: pipeline(project, context.abort) },
-            { operations: args.operations as SceneOp[], save: args.save, dryRun: args.dry_run },
+          const output = await editScene(
+            { graph: await graphFor(project), scripts, call: pipeline(project, context.abort), assetExists: (asset) => fs.existsSync(path.join(project.root, asset)), readAsset: (asset) => sourceReader(project.root).text(asset) },
+            { operations: args.operations, save: args.save },
           )
+          return breakLoop(context.sessionID, "unity_scene_edit", args, output, output.includes("NOT changed"))
         },
       }),
 
