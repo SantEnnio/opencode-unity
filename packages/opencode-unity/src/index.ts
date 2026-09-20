@@ -20,6 +20,7 @@ import { AGENT_PROMPT, projectFacts, renderRules } from "./rules.ts"
 import { renderStatus, startupLine } from "./status.ts"
 import { run as runProcess } from "./runtime.ts"
 import { editScene, type PipelineCall, viewScene } from "./scene.ts"
+import { sceneTools } from "./scene-tools.ts"
 import { commandResult, editorCommand, editorConnected, editorHasProjectOpen, findUnityCli } from "./unity/cli.ts"
 import { cacheDir, findEditor, findEditorExecutable, loadProject, type UnityProject } from "./unity/discovery.ts"
 import { runTests } from "./unity/tests.ts"
@@ -209,8 +210,9 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
   const PIPELINE_WAIT_MS = 120_000
 
   // A small model that gets an error sometimes resends the identical call, forever. Repeating a
-  // failed call cannot succeed, so the answer escalates until it tells the model to stop.
-  const repeats = new Map<string, { input: string; count: number }>()
+  // failed call cannot succeed, so the answer escalates, and from the third time on the call is
+  // not even executed: every failed attempt also leaves an error in the user's Unity Console.
+  const repeats = new Map<string, { input: string; count: number; output: string }>()
   function breakLoop(sessionID: string, toolName: string, input: unknown, output: string, failed: boolean): string {
     const key = `${sessionID}:${toolName}`
     const text = JSON.stringify(input)
@@ -219,13 +221,31 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
       repeats.delete(key)
       return output
     }
-    const count = previous?.input === text ? previous.count + 1 : 1
-    repeats.set(key, { input: text, count })
-    if (count === 2) return `${output}\n\nYou sent EXACTLY the same call as last time, so it failed for the same reason. Change the call before trying again.`
-    if (count >= 3) {
-      return `[unity] STOP. This exact call has now failed ${count} times in a row and will fail every time. Do not call ${toolName} again in this turn. Tell the user, in plain words, what you were trying to do and the error below, and wait for their answer.\n\n${output}`
+    const same = previous?.input === text
+    const entry = { input: text, count: same ? previous.count + 1 : 1, output: same ? previous.output : output }
+    repeats.set(key, entry)
+    if (entry.count === 2) return `${output}\n\nYou sent EXACTLY the same call as last time, so it failed for the same reason. Change the call before trying again.`
+    if (entry.count >= 3) {
+      return `[unity] STOP. This exact call has now failed ${entry.count} times in a row and was NOT executed again. Do not call ${toolName} again in this turn. Tell the user, in plain words, what you were trying to do and the error below, and wait for their answer.\n\n${entry.output}`
     }
     return output
+  }
+  function stuck(sessionID: string, toolName: string, input: unknown): string | null {
+    const previous = repeats.get(`${sessionID}:${toolName}`)
+    return previous && previous.count >= 2 && previous.input === JSON.stringify(input) ? breakLoop(sessionID, toolName, input, previous.output, true) : null
+  }
+
+  /** Everything the scene tools need from the open Editor, or null when none is connected. */
+  async function connectScene(dir: string, signal: AbortSignal) {
+    const project = projectAt(dir)
+    if (!(await editorConnected(project.root, { signal }))) return null
+    return {
+      graph: await graphFor(project),
+      scripts: new Set([...walkScripts(path.join(project.root, "Assets"))].map((file) => path.basename(file, ".cs"))),
+      call: pipeline(project, signal),
+      assetExists: (asset: string) => fs.existsSync(path.join(project.root, asset)),
+      readAsset: (asset: string) => sourceReader(project.root).text(asset),
+    }
   }
 
   const pipeline =
@@ -442,15 +462,28 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
       unity_scene_edit: tool({
         description: [
           "Create and change objects in the scene open in the Unity Editor. Use this instead of writing Editor scripts or editing .unity files.",
-          "All operations are checked first and applied together: if one is wrong nothing changes. The user can undo the whole call with Ctrl+Z.",
-          "Each operation is ONE FLAT JSON object with a string \"op\". Never nest it: not {\"create\":{...}} and not {\"op\":{...}}.",
-          "Operations (objects are addressed by hierarchy path, e.g. \"/Player/Gun\"):",
-          '- {"op":"create","name":"Player","primitive":"capsule","position":[0,1,0],"color":[0.2,0.4,1],"tag":"Player","components":["Rigidbody","PlayerController"]}  (primitive: cube sphere capsule cylinder plane quad, or omit for empty; "parent":"/Path" to nest; "color" makes and assigns a material)',
-          '- {"op":"set","target":"/Player","component":"Rigidbody","values":{"mass":2,"useGravity":false}}  (object references: "/Other/Object" or "Assets/Materials/Red.mat"; vectors [x,y,z]; colors [r,g,b,a])',
-          '- {"op":"add_component","target":"/Player","type":"BoxCollider","values":{"isTrigger":true}}',
-          '- {"op":"modify","target":"/Player","position":[0,2,0],"rotation":[0,90,0],"scale":[1,1,1],"color":"#808080","tag":"Player","layer":"Default","active":true,"parent":"/World","name":"Hero"}',
-          '- {"op":"remove_component","target":"/Player","type":"BoxCollider"}   - {"op":"delete","target":"/Old"}   - {"op":"instantiate","prefab":"Assets/Prefabs/Enemy.prefab","name":"Enemy1","position":[3,0,0]}',
+          "All operations are checked first and applied together. If one is wrong, nothing changes. The user can undo the whole call with Ctrl+Z.",
+          "Each operation is one flat JSON object. Every key is a plain word followed by its value. Objects are addressed by hierarchy path.",
+          "Examples, one operation per line:",
+          '{"op":"create","name":"Car","position":[0,1,0]}',
+          '{"op":"create","name":"Body","parent":"/Car","primitive":"cube","scale":[1.2,0.5,2.2],"color":"#E53935"}',
+          '{"op":"create","name":"Wheel_FL","parent":"/Car","primitive":"cylinder","position":[-0.6,-0.25,0.8],"scale":[0.5,0.1,0.5],"color":"#000000"}',
+          '{"op":"create","name":"Player","primitive":"capsule","tag":"Player","components":["Rigidbody","PlayerController"]}',
+          '{"op":"set","target":"/Player","component":"Rigidbody","values":{"mass":2,"useGravity":false}}',
+          '{"op":"set","target":"/CameraRig","component":"CameraFollow","values":{"target":"/Car","offset":[0,3,-6]}}',
+          '{"op":"add_component","target":"/Car","type":"BoxCollider","values":{"isTrigger":true}}',
+          '{"op":"modify","target":"/Car","position":[0,2,0],"rotation":[0,90,0],"tag":"Player","layer":"Default","active":true}',
+          '{"op":"modify","target":"/Old","parent":"/World","name":"Renamed"}',
+          '{"op":"remove_component","target":"/Car","type":"BoxCollider"}',
+          '{"op":"delete","target":"/Old"}',
+          '{"op":"instantiate","prefab":"Assets/Prefabs/Enemy.prefab","name":"Enemy1","position":[3,0,0]}',
+          "The primitive shapes are cube, sphere, capsule, cylinder, plane and quad. Leave primitive out for an empty object.",
+          "A color is a hex string or three numbers from 0 to 1. It creates a material and assigns it.",
+          "Values are plain JSON. Write 1500, true, [0,3,-6]. Never wrap a value in an object.",
+          "A value that points to another object is its hierarchy path. A value that points to an asset is its path starting with Assets/.",
+          "For a thing made of parts, create an empty parent first and put the scaled shapes inside it as children.",
           "Your own scripts can be added as components only after their .cs file exists and the compile report passed.",
+          "Send a few operations per call, not the whole scene at once.",
         ].join("\n"),
         args: {
           operations: tool.schema
@@ -462,22 +495,22 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
                 op: tool.schema
                   .any()
                   .meta({ type: "string", enum: ["create", "modify", "add_component", "remove_component", "set", "delete", "instantiate"], description: "What to do. A plain string, never an object" }),
-                target: tool.schema.string().optional().describe('Hierarchy path of an existing object, e.g. "/Player/Gun" (all ops except create and instantiate)'),
-                name: tool.schema.string().optional().describe("create/instantiate: name of the new object. modify: new name"),
-                primitive: tool.schema.enum(["cube", "sphere", "capsule", "cylinder", "plane", "quad"]).optional().describe("create: built-in shape. Omit for an empty object"),
-                parent: tool.schema.string().optional().describe('create/modify: hierarchy path of the parent object. "" moves to the scene root'),
+                target: tool.schema.string().optional().describe('Hierarchy path of an existing object, for example /Player/Gun. Not used by create and instantiate'),
+                name: tool.schema.string().optional().describe("Name of the new object. With modify, the new name"),
+                primitive: tool.schema.enum(["cube", "sphere", "capsule", "cylinder", "plane", "quad"]).optional().describe("Built-in shape for create. Leave out for an empty object"),
+                parent: tool.schema.string().optional().describe('Hierarchy path of the parent object, for example /Car'),
                 position: tool.schema.array(tool.schema.number()).optional().describe("[x, y, z] local position"),
                 rotation: tool.schema.array(tool.schema.number()).optional().describe("[x, y, z] Euler angles in degrees"),
                 scale: tool.schema.array(tool.schema.number()).optional().describe("[x, y, z] local scale"),
                 tag: tool.schema.string().optional(),
                 layer: tool.schema.string().optional(),
                 active: tool.schema.boolean().optional(),
-                color: tool.schema.any().optional().meta({ description: 'create/modify: plain color for an object with a MeshRenderer, [r, g, b] from 0 to 1 or "#RRGGBB". A material is created and assigned for you' }),
-                components: tool.schema.array(tool.schema.string()).optional().describe('create: component class names to add, e.g. ["Rigidbody", "PlayerController"]'),
-                type: tool.schema.string().optional().describe("add_component/remove_component: component class name"),
-                component: tool.schema.string().optional().describe("set: component class name whose values are changed"),
-                values: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe('set/add_component: property name -> value, e.g. {"mass": 2, "target": "/Player", "material": "Assets/Materials/Red.mat"}'),
-                prefab: tool.schema.string().optional().describe('instantiate: asset path, e.g. "Assets/Prefabs/Enemy.prefab"'),
+                color: tool.schema.any().optional().meta({ description: 'Plain color for an object that has a mesh, as a hex string such as #E53935 or three numbers from 0 to 1. A material is created and assigned for you' }),
+                components: tool.schema.array(tool.schema.string()).optional().describe('Component class names to add when creating, for example ["Rigidbody", "PlayerController"]'),
+                type: tool.schema.string().optional().describe("Component class name for add_component and remove_component"),
+                component: tool.schema.string().optional().describe("Component class name whose values are changed by set"),
+                values: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe('Property names and their new values as plain JSON. A number is written 1500, a switch true or false, a vector [0,3,-6], a reference "/Car". Never wrap a value in an object. Example {"mass": 1500, "useGravity": true, "target": "/Car"}'),
+                prefab: tool.schema.string().optional().describe('Asset path of the prefab for instantiate, for example Assets/Prefabs/Enemy.prefab'),
               }),
             )
             .min(1)
@@ -486,13 +519,11 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
           save: tool.schema.boolean().optional().describe("Save the scene afterwards (default false: the user reviews first)"),
         },
         async execute(args, context) {
-          const project = projectAt(context.directory)
-          if (!(await editorConnected(project.root, { signal: context.abort }))) return NO_EDITOR
-          const scripts = new Set([...walkScripts(path.join(project.root, "Assets"))].map((file) => path.basename(file, ".cs")))
-          const output = await editScene(
-            { graph: await graphFor(project), scripts, call: pipeline(project, context.abort), assetExists: (asset) => fs.existsSync(path.join(project.root, asset)), readAsset: (asset) => sourceReader(project.root).text(asset) },
-            { operations: args.operations, save: args.save },
-          )
+          const repeated = stuck(context.sessionID, "unity_scene_edit", args)
+          if (repeated) return repeated
+          const editor = await connectScene(context.directory, context.abort)
+          if (!editor) return NO_EDITOR
+          const output = await editScene(editor, { operations: args.operations, save: args.save })
           return breakLoop(context.sessionID, "unity_scene_edit", args, output, output.includes("NOT changed"))
         },
       }),
@@ -563,6 +594,12 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
       output.system.push(renderRules(projectFacts(startupProject)))
     },
   }
+
+  // Small models break nested JSON arguments, so by default they get one flat tool per action.
+  // The batch tool (several operations in one transaction) suits stronger models.
+  const sceneMode = options.sceneTools ?? "simple"
+  if (sceneMode === "simple") delete hooks.tool!.unity_scene_edit
+  if (sceneMode !== "batch") Object.assign(hooks.tool!, sceneTools({ connect: connectScene, notConnected: NO_EDITOR, breakLoop, stuck }))
 
   const allowedMethods = options.executeMethods ?? []
   if (allowedMethods.length > 0) {

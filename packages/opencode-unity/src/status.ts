@@ -75,7 +75,7 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
     `unity_compile    ${connected ? "Unity Editor recompile (Pipeline)" : projects > 0 && dotnet ? "dotnet build" : open ? "UNAVAILABLE while the Editor is open without the Pipeline package" : "Unity batch mode"}`,
     `unity_test       ${connected ? "in the open Editor (Pipeline)" : open ? "UNAVAILABLE while the Editor is open without the Pipeline package" : "Unity CLI / batch mode"}`,
     `unity_console    ${connected ? "available" : "needs the Pipeline package in an open Editor"}`,
-    `Scene editing    ${connected ? "available (unity_scene_view, unity_scene_edit)" : "needs the Pipeline package in an open Editor"}`,
+    `Scene editing    ${connected ? "available (unity_scene_view, unity_object_*, unity_component_*)" : "needs the Pipeline package in an open Editor"}`,
     `Lints ${options.lint === false ? "off" : "on"}, guards on${options.allow?.length ? ` (allowed: ${options.allow.join(", ")})` : ""}, idle gate ${options.idleGate === false ? "off" : "on"}, rules ${options.rules === false ? "off" : "on"}`,
   ].join("\n")
 }

@@ -71,7 +71,7 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
 
 - Writes to `.meta`, `Library/`, scenes/prefabs/assets (YAML), `ProjectSettings/`,
   `Packages/manifest.json` and generated project files are blocked, with what to do instead
-  (for scenes: `unity_scene_edit`).
+  (for scenes: the scene tools below).
 - Idle gate: if the model stops while the build is red, it is sent back to fix the errors
   (twice at most per user message).
 
@@ -83,7 +83,7 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
 | `unity_lookup` | Fuzzy API lookup: signatures, overloads, obsolete → replacement, example from the docs |
 | `unity_docs_search` / `unity_docs_read` | Offline Manual + Scripting Reference + docs of the installed packages (SQLite FTS5) |
 | `unity_docs_install` | Background download + indexing of the offline documentation |
-| `unity_scene_view` / `unity_scene_edit` | Read and change the open scene through the Editor: objects, components, values, references. Validated first, applied as one transaction and one Undo step |
+| `unity_scene_view`, `unity_object_*`, `unity_component_*`, `unity_prefab_*`, `unity_scene_save` | Read and change the open scene through the Editor: objects, components, values, references, prefabs. One flat tool per action, validated before anything is touched (see below) |
 | `unity_pipeline_install` | Adds the Pipeline package to the project, after the user approves the permission prompt |
 | `unity_compile` | Explicit check. Uses Unity's own compiler when it can (see below) |
 | `unity_test` | EditMode/PlayMode tests, failures only |
@@ -114,41 +114,61 @@ server directly (loopback only, token from `Library/Pipeline/`), so calls take m
 path, every component of one object with its current values (shown with the names a programmer
 would type: `mass`, not `m_Mass`).
 
-**`unity_scene_edit`** takes a short list of operations:
+**Changing the scene: one flat tool per action.** A small model is never asked for nested JSON.
+A vector is `"0, 1.5, -3"`, values are `"mass=1500; useGravity=true; target=/Car"`, a color is
+`red` or `#E53935`:
+
+| Tool | Arguments |
+|---|---|
+| `unity_object_create` | `name`, `shape` (cube, sphere, capsule, cylinder, plane, quad, or none for a group), `parent`, `position`, `rotation`, `scale`, `color`, `components` |
+| `unity_object_modify` | `path`, then any of `position`, `rotation`, `scale`, `color`, `tag`, `layer`, `active`, `new_name`, `new_parent` |
+| `unity_object_delete` | `path` |
+| `unity_component_add` | `path`, `component`, optional `values` |
+| `unity_component_set` | `path`, `component`, `values` |
+| `unity_component_remove` | `path`, `component` |
+| `unity_prefab_create` | `path` of a scene object, optional `prefab` asset path. Build a thing once, reuse it |
+| `unity_prefab_place` | `prefab`, `name`, `parent`, `position`, `rotation` |
+| `unity_scene_save` | none |
+
+Why flat: in a real session qwen3.6-35b-a3b wrote a list of operations correctly into a *file*,
+then broke the very same JSON, at the very same key, every time it had to go inside a tool
+argument. Simple calls always worked. So the default surface is simple calls. Object-reference
+values take a scene path (`target=/Car`, resolved to the field's type: Transform, Rigidbody,
+GameObject...) or an asset path (`material=Assets/Materials/Red.mat`). `color` writes a material
+for that object under `Assets/Materials/` and assigns it. Successful calls end with a pointer to
+the next sensible step.
+
+Stronger models can use **`unity_scene_edit`** instead, a single tool that takes a list of
+operations and applies them as one transaction (set `"sceneTools": "batch"`, or `"both"`):
 
 ```json
 { "operations": [
-  { "op": "create", "name": "Enemy", "primitive": "cube", "position": [3, 0.5, 0], "tag": "Respawn",
-    "components": ["Rigidbody", "Follower"] },
-  { "op": "set", "target": "/Enemy", "component": "Rigidbody", "values": { "mass": 4, "useGravity": false } },
-  { "op": "set", "target": "/Enemy", "component": "Follower", "values": { "target": "/Player", "speed": 7 } },
-  { "op": "create", "name": "Eye", "parent": "/Enemy", "primitive": "sphere", "scale": [0.2, 0.2, 0.2] }
+  { "op": "create", "name": "Car" },
+  { "op": "create", "name": "Body", "parent": "/Car", "primitive": "cube", "scale": [1.2, 0.5, 2.2], "color": "red" },
+  { "op": "add_component", "target": "/Car", "type": "Rigidbody", "values": { "mass": 1500 } }
 ] }
 ```
 
-Operations: `create`, `modify` (transform, color, tag, layer, active, parent, name), `add_component`,
-`remove_component`, `set`, `delete`, `instantiate` (prefab). Objects are addressed by hierarchy
-path. Object-reference fields accept a scene path (`"/Player"`, resolved to the field's type:
-Transform, Rigidbody, GameObject...) or an asset path (`"Assets/Materials/Red.mat"`). `"color"`
-on `create`/`modify` (`[r, g, b]` or `"#RRGGBB"`) writes a material for that object under
-`Assets/Materials/` and assigns it, so a model can block out a scene without knowing shaders.
+What makes it safe for a small model, whichever surface is used:
 
-What makes it safe for a small model:
-
-- **The shape is forgiving.** Small models get the nesting wrong far more often than the content
-  (`{"create": {...}}`, `{"op": {"create": {...}}}`, a transform sent as `set`, vectors as
-  `{x, y, z}`, colors as 0-255). All of these are understood instead of rejected, and the schema
-  the model sees spells out every field. This came from a real session in which ten calls in a row
-  failed on nesting alone; those inputs are now regression tests.
-- **Everything is validated before the scene is touched**, and every problem is reported at once,
-  with the fix: unknown component (`RigidBody` → did you mean `Rigidbody`), unknown property (with
-  the list of real ones), missing object (closest paths), tag or layer that does not exist,
-  duplicate names. Property names are matched the way they are written in code, including names
-  that changed (`linearDamping` still serializes as `m_Drag` in Unity 6000.0).
-- **All or nothing**: the operations run as one transactional batch. If Unity rejects one, all of
-  them are rolled back and the model is told which of *its* operations failed.
-- **One Undo step**: the user reverts a whole call with Ctrl/Cmd+Z.
-- **Nothing is saved unless asked** (`"save": true`), so the user can look first.
+- **Everything is validated before the scene is touched**, with the fix in the message: unknown
+  component (`RigidBody` → did you mean `Rigidbody`), unknown property (with the list of real
+  ones), missing object (closest paths), tag or layer that does not exist, duplicate names, a value
+  of the wrong kind, an asset that does not exist or that Unity cannot import (hand-written YAML).
+  Property names are matched the way they are written in code, including names that changed
+  (`linearDamping` still serializes as `m_Drag` in Unity 6000.0).
+- **Input is forgiving.** Invented type wrappers (`{"$float": 1500}`), vectors as `{x, y, z}`,
+  colors as 0-255, misspelled keys, and, for the batch tool, the nestings small models produce
+  (`{"create": {...}}`, `{"op": {...}}`). Each of these came from a real failed call and is now a
+  regression test.
+- **No silent no-ops**: a field that cannot be understood is an error, never ignored.
+- **Loops are cut**: the second identical failing call is called out, from the third on it is not
+  executed and the model is told to stop and talk to the user. (A call Unity rejects also leaves an
+  error in the user's Console, so not repeating it matters.)
+- **One Undo step per call**; the batch tool is all-or-nothing.
+- **Nothing is saved unless asked.**
+- A warning when a child is created under a non-uniformly scaled parent (it would be stretched),
+  with the usual fix: an empty group plus scaled shapes inside it.
 - Blocked in Play mode (by the package). User scripts can be added as components once they compile.
 
 Also through the open Editor: `unity_compile` triggers a real recompile and reads Unity's
@@ -180,6 +200,8 @@ All optional. Sources, later wins: `~/.config/opencode/opencode-unity/config.jso
   "idleGateRetries": 2,
   "rules": true,
   "agent": true,
+  "sceneTools": "simple",          // simple = one flat tool per action (small models)
+                                   // batch = unity_scene_edit with a list of operations | both
   "docs": "manual",                // auto = download missing docs in the background
   "allow": [],                     // guard rules to switch off: meta, generated, project-files,
                                    // serialized-asset, project-settings, package-manifest

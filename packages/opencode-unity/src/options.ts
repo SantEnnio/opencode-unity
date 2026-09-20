@@ -18,6 +18,11 @@ export type UnityPluginOptions = {
   idleGateRetries?: number
   /** Add the short Unity rules block to the system prompt (default true) */
   rules?: boolean
+  /**
+   * simple (default): one flat tool per scene action, for small models.
+   * batch: a single unity_scene_edit taking a list of operations, for strong models. both: all of them.
+   */
+  sceneTools?: "simple" | "batch" | "both"
   /** Register the `unity-coder` agent (default true) */
   agent?: boolean
   /** manual: docs are installed on request only. auto: download them in the background when missing. */

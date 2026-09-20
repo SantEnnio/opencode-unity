@@ -34,7 +34,7 @@ export const DEFAULT_RULES: GuardRule[] = [
     id: "serialized-asset",
     test: (p) => SERIALIZED_ASSETS.test(p),
     reason:
-      "This is a Unity-serialized YAML asset: hand edits corrupt object references. For scenes use unity_scene_view and unity_scene_edit, which change the scene through the Editor. For other assets, tell the user what to change in the Editor. Do not write an Editor script just to build a scene.",
+      "This is a Unity-serialized YAML asset: hand edits corrupt object references. For scenes use unity_scene_view to look, and unity_object_create, unity_object_modify, unity_component_add and unity_component_set to change things through the Editor. For other assets, tell the user what to change in the Editor. Do not write an Editor script just to build a scene.",
   },
   {
     id: "project-settings",

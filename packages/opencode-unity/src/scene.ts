@@ -88,11 +88,28 @@ function flatten(nodes: HierarchyNode[], into = new Map<string, Set<string>>()):
   return into
 }
 
+const COLOR_NAMES: Record<string, string> = {
+  red: "#E53935", green: "#43A047", blue: "#1E88E5", yellow: "#FDD835", orange: "#FB8C00", purple: "#8E24AA", pink: "#EC407A",
+  brown: "#6D4C41", black: "#111111", white: "#FFFFFF", gray: "#808080", grey: "#808080", darkgray: "#424242", darkgrey: "#424242",
+  lightgray: "#BDBDBD", lightgrey: "#BDBDBD", cyan: "#00ACC1", magenta: "#D81B60", gold: "#FFC107", silver: "#C0C0C0",
+}
+
 /** [r,g,b], [r,g,b,a] (0-1, or 0-255 when any channel is above 1) or "#RRGGBB[AA]" -> [r,g,b,a] in 0-1. */
 export function parseColor(value: unknown): number[] | null {
+  // Seen live: {"color:": {"#000000}}, {": ": {"}}. The color is in there, wrapped in junk.
+  if (isRecord(value)) {
+    const hex = /#[0-9a-f]{6}(?:[0-9a-f]{2})?\b/i.exec(JSON.stringify(value))?.[0]
+    return hex ? parseColor(hex) : null
+  }
   if (typeof value === "string") {
+    const named = COLOR_NAMES[value.trim().toLowerCase().replace(/[\s_-]/g, "")]
+    if (named) return parseColor(named)
     const hex = /^#?([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value.trim())
-    if (!hex) return null
+    if (!hex) {
+      // "0.2, 0.4, 1" or "220 30 30"
+      const numbers = value.match(/-?\d*\.?\d+/g)?.map(Number)
+      return numbers && (numbers.length === 3 || numbers.length === 4) ? parseColor(numbers) : null
+    }
     const channels = (hex[1]! + (hex[2] ?? "ff")).match(/../g)!
     return channels.map((c) => Number((parseInt(c, 16) / 255).toFixed(4)))
   }
@@ -101,6 +118,8 @@ export function parseColor(value: unknown): number[] | null {
   const [r, g, b, a = scale] = value as number[]
   return [r!, g!, b!, a].map((n) => Number((n / scale).toFixed(4)))
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isVector = (value: unknown, length?: number): value is number[] =>
   Array.isArray(value) && value.every((n) => typeof n === "number") && (length === undefined || value.length === length)
@@ -126,17 +145,66 @@ const reference = (text: string) => (/^(Assets|Packages)\//.test(text) ? { path:
  * {asset}, a real handle, or an object with some invented key around the path: anything else is
  * refused here, because a handle Unity rejects also leaves an error in the user's Console.
  */
-function toValue(value: unknown, current: unknown): unknown {
+function toValue(raw: unknown, current: unknown): unknown {
+  const value = unwrapTyped(raw)
   const referenceField = current === null || isHandle(current)
   if (isRecord(value)) {
     if (typeof value.ref === "string") return { hierarchyPath: normalizePath(value.ref) }
     if (typeof value.asset === "string") return { path: value.asset }
-    if (!referenceField || HANDLE_KEYS.some((key) => key in value)) return value
+    if (!referenceField) return coerce(value, current)
+    if (HANDLE_KEYS.some((key) => key in value)) return value
     const texts = Object.values(value).filter((v): v is string => typeof v === "string" && v.length > 0)
     if (texts.length === 1) return reference(texts[0]!)
     throw new Error(`is an object reference: give it the hierarchy path of a scene object ("/Player") or an asset path ("Assets/Materials/Red.mat"), not ${JSON.stringify(value).slice(0, 120)}`)
   }
-  return referenceField && typeof value === "string" && value.length > 0 ? reference(value) : value
+  if (referenceField) return typeof value === "string" && value.length > 0 ? reference(value) : value
+  return coerce(value, current)
+}
+
+/**
+ * Seen live: {"mass": {"$float": 1500}}, {"useGravity": {"$bool": true}}, {"offset": {"$vector3": [0,3,-6]}}.
+ * With no type information for a value, a model invents a typed wrapper. One-key objects whose key
+ * looks like a type tag, and {type, value} pairs, are unwrapped.
+ */
+export function unwrapTyped(value: unknown): unknown {
+  if (!isRecord(value)) return value
+  const keys = Object.keys(value)
+  if (keys.length === 1 && /^\$|^(float|double|int|integer|number|bool|boolean|string|enum|vector[234]?|color|value)$/i.test(keys[0]!)) return unwrapTyped(value[keys[0]!])
+  if ("value" in value && keys.every((k) => k === "value" || k === "type")) return unwrapTyped(value.value)
+  return value
+}
+
+/** Shapes the value like the property it replaces, or explains what that property needs. */
+function coerce(value: unknown, current: unknown): unknown {
+  const example = JSON.stringify(current)
+  if (typeof current === "number") {
+    const number = typeof value === "string" && value.trim() !== "" ? Number(value) : value
+    if (typeof number === "number" && Number.isFinite(number)) return number
+    throw new Error(`is a number: write it bare, like ${example}, not ${JSON.stringify(value).slice(0, 80)}`)
+  }
+  if (typeof current === "boolean") {
+    if (typeof value === "boolean") return value
+    if (value === "true" || value === "false") return value === "true"
+    throw new Error(`is true or false, written bare, not ${JSON.stringify(value).slice(0, 80)}`)
+  }
+  if (Array.isArray(current) && current.every((n) => typeof n === "number")) {
+    const vector = toVector4(value)
+    if (isVector(vector) && vector.length === current.length) return vector
+    throw new Error(`is a list of ${current.length} numbers, like ${example}, not ${JSON.stringify(value).slice(0, 80)}`)
+  }
+  if (typeof current === "string") {
+    if (typeof value === "string") return value
+    throw new Error(`is a text value, like ${example}, not ${JSON.stringify(value).slice(0, 80)}`)
+  }
+  return value
+}
+
+function toVector4(value: unknown): unknown {
+  if (!isRecord(value)) return value
+  const axes = ["x", "y", "z", "w"].filter((axis) => typeof value[axis] === "number")
+  if (axes.length >= 2) return axes.map((axis) => value[axis])
+  const channels = ["r", "g", "b", "a"].filter((c) => typeof value[c] === "number")
+  return channels.length >= 3 ? channels.map((c) => value[c]) : value
 }
 
 // ---------------------------------------------------------------- input shapes
@@ -162,7 +230,6 @@ const OP_SYNONYMS: Record<string, string> = {
 
 const FIELDS = ["target", "name", "primitive", "parent", "position", "rotation", "scale", "tag", "layer", "active", "components", "type", "component", "values", "prefab", "color"]
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
 function toVector(value: unknown): unknown {
   if (isRecord(value) && ["x", "y", "z"].every((axis) => typeof value[axis] === "number")) return [value.x, value.y, value.z]
@@ -418,8 +485,9 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
   const expanded = request.operations.flatMap((raw) => normalizeOps(raw).map((op) => ({ op, raw })))
   const operations = expanded.map((entry) => entry.op)
   for (const [index, op] of operations.entries()) {
-    const label = `operation ${index + 1}${op.op ? ` (${op.op})` : ""}`
-    const fail = (message: string) => errors.push(`${label}: ${message}`)
+    // With a single operation (the flat tools) the numbering is noise.
+    const label = expanded.length > 1 ? `operation ${index + 1}${op.op ? ` (${op.op})` : ""}: ` : ""
+    const fail = (message: string) => errors.push(`${label}${message.charAt(0).toUpperCase()}${message.slice(1)}`)
     const push = (command: string, params: Record<string, unknown>) => plan.push({ source: index, op: { command, params } })
 
     if (op.unknown) {
@@ -454,7 +522,7 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
       if (op.active !== undefined) push("set_active", { target: path, active: op.active })
       if (op.color !== undefined) {
         const color = parseColor(op.color)
-        if (!color) fail(`'color' must be [r, g, b] with values from 0 to 1, or a hex string like "#808080".`)
+        if (!color) fail(`'color' must be a color name (red, black, gray...), a hex code like #808080, or three numbers from 0 to 1.`)
         else if (!objects.get(path)!.has("MeshRenderer")) fail(`'${path}' has no MeshRenderer, so it cannot show a color. Create it with a primitive (cube, sphere, plane...).`)
         else {
           // One material per object, named after it: a color on a shared material would repaint every user of it.
@@ -503,7 +571,10 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
         const current = source[resolved]
         let converted: unknown
         try {
-          converted = Array.isArray(current) ? (wrap || !Array.isArray(value) ? [value] : value).map((item) => toValue(item, current[0] ?? null)) : toValue(value, current)
+          // A list of numbers is one value (vector, color); any other list holds elements (materials).
+          const elements = Array.isArray(current) && !(current.length > 0 && current.every((n) => typeof n === "number"))
+          const unwrapped = unwrapTyped(value)
+          converted = elements ? (wrap || !Array.isArray(unwrapped) ? [unwrapped] : unwrapped).map((item) => toValue(item, (current as unknown[])[0] ?? null)) : toValue(value, current)
         } catch (error) {
           fail(`${simple}.${name} ${(error as Error).message}.`)
           continue
@@ -627,12 +698,20 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
           break
         }
         const name = op.name ?? op.prefab.slice(op.prefab.lastIndexOf("/") + 1).replace(/\.prefab$/i, "")
-        const path = `/${name}`
-        if (objects.has(path)) {
-          fail(`'${path}' already exists. Give the instance a unique 'name'.`)
+        const parent = op.parent ? existing(op.parent, "parent") : ""
+        if (parent === null) break
+        const path = `${parent}/${name}`
+        if (objects.has(path) || objects.has(`/${name}`)) {
+          fail(`an object named '${name}' already exists. Give the copy a unique 'name', for example ${name}_2.`)
           break
         }
+        if (planner.assetExists && !planner.assetExists(op.prefab)) {
+          fail(`prefab '${op.prefab}' does not exist. Create it first from a scene object with unity_prefab_create, or check the path (it starts with Assets/ and ends with .prefab).`)
+          break
+        }
+        // The copy is created in the scene root, then moved: the package command has no parent argument.
         push("instantiate_prefab", { prefab: { path: op.prefab }, name })
+        if (parent) push("set_parent", { target: `/${name}`, parent, world_position_stays: false })
         objects.set(path, new Set(["Transform"]))
         created.add(path)
         await common(path)
@@ -646,7 +725,8 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
   }
 
   if (errors.length > 0) {
-    return [`[unity] Scene NOT changed: ${errors.length} problem${errors.length === 1 ? "" : "s"} found before touching it. Fix and call unity_scene_edit again.`, "", ...errors.map((e, i) => `${i + 1}) ${e}`)].join("\n")
+    if (errors.length === 1 && expanded.length === 1) return `[unity] Scene NOT changed. ${errors[0]} Fix it and call the tool again.`
+    return [`[unity] Scene NOT changed: ${errors.length} problem${errors.length === 1 ? "" : "s"} found before touching it. Fix ${errors.length === 1 ? "it" : "them"} and call the tool again.`, "", ...errors.map((e, i) => `${i + 1}) ${e}`)].join("\n")
   }
   if (plan.length === 0) return "[unity] Nothing to do: no operations given."
   if (request.dryRun) return `[unity] Valid, but NOTHING WAS APPLIED because dry_run was true. Call unity_scene_edit again with the same operations and without dry_run to apply them.`
@@ -672,10 +752,15 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
     const missing = /No asset at path '([^']+)'/.exec(error)?.[1]
     const onDisk = missing && planner.assetExists?.(missing)
     const hint = onDisk ? ` The file is on disk but Unity could not import it, so it is corrupt or not an asset Unity understands. Do not retry with the same path. For a plain color use "color" on create/modify instead, and tell the user about '${missing}'.` : ""
-    return `[unity] Scene NOT changed (everything was rolled back). Operation ${source + 1} (${operations[source]!.op}) failed in Unity: ${error}${hint}`
+    const which = operations.length > 1 ? `Operation ${source + 1} (${operations[source]!.op}) failed in Unity` : "Unity refused it"
+    return `[unity] Scene NOT changed${operations.length > 1 ? " (everything was rolled back)" : ""}. ${which}: ${error}${hint}`
   }
 
-  const lines = [`[unity] Scene changed: ${operations.length} operation${request.operations.length === 1 ? "" : "s"} applied as one Undo step (the user can revert with Ctrl+Z).`]
+  const lines = [
+    operations.length === 1
+      ? "[unity] Done. Scene changed (the user can undo it with Ctrl+Z)."
+      : `[unity] Scene changed: ${operations.length} operations applied as one Undo step (the user can revert with Ctrl+Z).`,
+  ]
   for (const warning of [...new Set(warnings)]) lines.push(`WARNING: ${warning}`)
   if (materials.size > 0) lines.push(`Materials written (not undoable): ${[...materials.keys()].join(", ")}.`)
   if (request.save) {
@@ -686,7 +771,7 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
       lines.push(saved.ok ? `Saved ${hierarchy.scenePath}.` : `Saving failed: ${saved.error}`)
     }
   } else {
-    lines.push("The scene is NOT saved yet. Pass save: true when the user is happy with it, or let them save in the Editor.")
+    lines.push("The scene is not saved yet: call unity_scene_save when the user is happy with it.")
   }
   return lines.join("\n")
 }

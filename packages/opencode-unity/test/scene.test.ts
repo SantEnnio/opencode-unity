@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { unwrapTyped } from "../src/scene.ts"
 import { corruptAsset, editScene, friendlyName, type Hierarchy, normalizeOp, normalizeOps, parseColor, type PipelineCall, resolveProperty, viewScene } from "../src/scene.ts"
 
 const hierarchy: Hierarchy = {
@@ -81,9 +82,9 @@ describe("unity_scene_edit", () => {
       ],
     })
     expect(out).toContain("Scene NOT changed: 5 problems")
-    expect(out).toContain("primitive 'plain' does not exist")
+    expect(out).toContain("Primitive 'plain' does not exist")
     expect(out).toContain("'/Player' already exists")
-    expect(out).toContain("tag 'Hero' does not exist. Existing tags: Untagged, Player")
+    expect(out).toContain("Tag 'Hero' does not exist. Existing tags: Untagged, Player")
     expect(out).toContain("no settable property 'weight'")
     expect(out).toContain("has no Rigidbody component")
     expect(editor.applied()).toBeUndefined()
@@ -102,7 +103,7 @@ describe("unity_scene_edit", () => {
       ],
     })
     expect(out).toContain("6 operations applied as one Undo step")
-    expect(out).toContain("NOT saved")
+    expect(out).toContain("not saved yet")
     expect(editor.applied()).toEqual([
       { command: "create_gameobject", params: { name: "Enemy", primitive: "cube" } },
       { command: "set_transform", params: { target: "/Enemy", position: [1, 0, 0] } },
@@ -154,7 +155,10 @@ describe("color", () => {
     expect(parseColor([1, 0.5, 0])).toEqual([1, 0.5, 0, 1])
     expect(parseColor([220, 30, 30])).toEqual([0.8627, 0.1176, 0.1176, 1])
     expect(parseColor("#404040")).toEqual([0.251, 0.251, 0.251, 1])
-    expect(parseColor("grey")).toBeNull()
+    expect(parseColor("grey")).toEqual([0.502, 0.502, 0.502, 1])
+    expect(parseColor("Dark Gray")).toEqual(parseColor("#424242"))
+    expect(parseColor("0.2, 0.4, 1")).toEqual([0.2, 0.4, 1, 1])
+    expect(parseColor("plaid")).toBeNull()
     expect(parseColor([1, 2])).toBeNull()
   })
 
@@ -222,6 +226,55 @@ describe("operation shapes small models actually produce", () => {
     ])
   })
 
+  test("seen live: the same degeneration one session later, with the color buried in junk", async () => {
+    const raw = {
+      op: "create",
+      name: "Wheel_FL",
+      parent: "/Car",
+      "primitive:": { primitive: "capsule", position: [-0.65, -0.25, 0.8], scale: [0.5, 0.5, 0.5] },
+      "color:": { "#000000}}, {": ": {" },
+    }
+    expect(parseColor(raw["color:"])).toEqual([0, 0, 0, 1])
+    const scene: Hierarchy = { ...hierarchy, roots: [{ name: "Car", hierarchyPath: "/Car", components: ["Transform", "MeshRenderer"], children: [] }] }
+    const editor = fakeEditor({ get_scene_hierarchy: () => scene })
+    const out = await editScene({ ...planner(editor.call), assetExists: () => false }, { operations: [raw] })
+    expect(out).toContain("Scene changed")
+    expect(editor.applied()![0]).toEqual({ command: "create_gameobject", params: { name: "Wheel_FL", primitive: "capsule", parent: "/Car" } })
+    expect(out).toContain("Assets/Materials/Car_Wheel_FL.mat")
+  })
+
+  test("seen live: values wrapped in invented type tags", async () => {
+    expect(unwrapTyped({ $float: 1500 })).toBe(1500)
+    expect(unwrapTyped({ $vector3: [0, 30, 20] })).toEqual([0, 30, 20])
+    expect(unwrapTyped({ type: "float", value: 2 })).toBe(2)
+    expect(unwrapTyped({ x: 1, y: 2 })).toEqual({ x: 1, y: 2 })
+
+    const editor = fakeEditor()
+    const out = await editScene(planner(editor.call), {
+      operations: [{ op: "set", target: "/Player", component: "Rigidbody", values: { mass: { $float: 1500 }, useGravity: { $bool: false }, drag: "0.1" } }],
+    })
+    expect(out).toContain("Scene changed")
+    expect(editor.applied()![0]!.params.properties).toEqual({ m_Mass: 1500, m_UseGravity: false, m_Drag: 0.1 })
+  })
+
+  test("found by replaying that call live: a vector is one value, not a list of elements", async () => {
+    const editor = fakeEditor()
+    const edit = (offset: unknown) => editScene(planner(editor.call), { operations: [{ op: "add_component", target: "/Player", type: "Follower", values: { offset } }] })
+    for (const offset of [[0, 30, 20], { $vector3: [0, 30, 20] }, { x: 0, y: 30, z: 20 }]) {
+      expect(await edit(offset)).toContain("Scene changed")
+      expect(editor.applied()!.at(-1)!.params.properties).toEqual({ offset: [0, 30, 20] })
+    }
+    expect(await edit([1, 2])).toContain("Follower.offset is a list of 3 numbers")
+  })
+
+  test("a value of the wrong kind is refused before Unity sees it, with the form it needs", async () => {
+    const editor = fakeEditor()
+    const out = await editScene(planner(editor.call), { operations: [{ op: "set", target: "/Player", component: "Rigidbody", values: { mass: { heavy: true }, useGravity: "yes" } }] })
+    expect(out).toContain("Rigidbody.mass is a number: write it bare, like 1")
+    expect(out).toContain("Rigidbody.useGravity is true or false")
+    expect(editor.applied()).toBeUndefined()
+  })
+
   test("seen live: a hand-written material Unity cannot import", async () => {
     const twice = "%YAML 1.1\n--- !u!21 &2100000\nMaterial:\n--- !u!114 &597\nMonoBehaviour:\n--- !u!21 &2100000\nMaterial:\n"
     expect(corruptAsset(twice)).toContain("two objects with the same id (&2100000)")
@@ -243,7 +296,7 @@ describe("operation shapes small models actually produce", () => {
   test("a field that cannot be understood is an error, never a silent no-op", async () => {
     const editor = fakeEditor()
     const out = await editScene(planner(editor.call), { operations: [{ op: "create", name: "A", size: 3 }] })
-    expect(out).toContain("unknown field 'size'. Allowed fields: op, target, name")
+    expect(out).toContain("Unknown field 'size'. Allowed fields: op, target, name")
     expect(editor.applied()).toBeUndefined()
   })
 
@@ -256,7 +309,7 @@ describe("operation shapes small models actually produce", () => {
 
   test("what cannot be understood gets an error that shows the input and the right shape", async () => {
     const out = await editScene(planner(fakeEditor().call), { operations: [{ op: "paint", colour: "red" }] })
-    expect(out).toContain("unknown op 'paint'")
+    expect(out).toContain("Unknown op 'paint'")
     expect(out).toContain('You sent: {"op":"paint","colour":"red"}')
     expect(out).toContain('Correct shape: {"op":"create"')
   })
@@ -268,15 +321,15 @@ describe("operation shapes small models actually produce", () => {
     const edit = (assetExists: (p: string) => boolean) =>
       editScene({ ...planner(editor.call), assetExists }, { operations: [{ op: "set", target: "/Ring", component: "MeshRenderer", values: { material: "Assets/Materials/Asphalt.mat" } }] })
 
-    expect(await edit(() => false)).toContain("asset 'Assets/Materials/Asphalt.mat' does not exist")
+    expect(await edit(() => false)).toContain("Asset 'Assets/Materials/Asphalt.mat' does not exist")
 
     // seen live: {"material": {"layer": "Assets/Materials/Asphalt.mat"}}. Unity rejects that handle and logs a Console error.
     const invented = (value: unknown) =>
       editScene({ ...planner(editor.call), assetExists: () => true }, { operations: [{ op: "set", target: "/Ring", component: "MeshRenderer", values: { material: value } }] })
-    expect(await invented({ layer: "Assets/Materials/Asphalt.mat" })).toContain("applied")
+    expect(await invented({ layer: "Assets/Materials/Asphalt.mat" })).toContain("Scene changed")
     expect(editor.applied()![0]!.params.properties).toEqual({ m_Materials: [{ path: "Assets/Materials/Asphalt.mat" }] })
     expect(await invented({ shader: "Lit", layer: "x" })).toContain("MeshRenderer.material is an object reference")
-    expect(await edit(() => true)).toContain("applied")
+    expect(await edit(() => true)).toContain("Scene changed")
     expect(editor.applied()![0]!.params.properties).toEqual({ m_Materials: [{ path: "Assets/Materials/Asphalt.mat" }] })
   })
 })

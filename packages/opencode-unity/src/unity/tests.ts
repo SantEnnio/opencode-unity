@@ -39,7 +39,7 @@ export async function runTests(project: UnityProject, mode: TestMode, filter: st
     // that modal, and it freezes the Editor (and every later command) until it is dismissed.
     const scene = commandResult(await editorCommand(project.root, "get_scene_hierarchy", {}, { timeoutMs: 15_000 }))
     if (scene.ok && (scene.result as { isDirty?: boolean } | null)?.isDirty) {
-      return "[unity] Tests not started: the open scene has unsaved changes, and Unity would block on a \"save scene?\" dialog. Save it first (unity_scene_edit with save: true, or ask the user to press Ctrl/Cmd+S), then run unity_test again."
+      return "[unity] Tests not started: the open scene has unsaved changes, and Unity would block on a \"save scene?\" dialog. Save it first (unity_scene_save, or ask the user to press Ctrl/Cmd+S), then run unity_test again."
     }
 
     // Always asynchronous: the package's synchronous mode waits on the main thread for a test
