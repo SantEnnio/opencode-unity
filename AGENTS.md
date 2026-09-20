@@ -21,5 +21,7 @@
   short, imperative, ending with the exact next step.
 - No shell strings: spawn processes with argument arrays and build paths with `node:path`. The
   code must run on Windows, macOS and Linux.
+- Read `docs/STATUS.md` before starting (what is done, verified, broken) and update it when that
+  changes. `docs/small-model-tool-design.md` holds the rules for anything a model reads or calls.
 - `sandbox/` is git-ignored scratch space for throwaway Unity projects. Never point tests at a
   real user project.

@@ -250,7 +250,9 @@ To run from source instead of the bundle, create `.opencode/plugins/unity.ts` in
 export { UnityPlugin } from "/absolute/path/to/packages/opencode-unity/src/index.ts"
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Where the project stands, what is verified and what is not:
+[docs/STATUS.md](docs/STATUS.md). What was learned about building tools for small models:
+[docs/small-model-tool-design.md](docs/small-model-tool-design.md).
 
 ## License
 
