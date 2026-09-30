@@ -30,8 +30,9 @@ Last updated: 2026-09-30. Version 0.1.0. Source on GitHub
 ## Not verified
 
 - **Windows and Linux.** The code is written for them (paths, process-tree kill, Editor discovery,
-  lock detection, cache locations) and unit tests cover the Windows path logic, but nothing has
-  run there. CI will be the first run once the repository is public.
+  lock detection, cache locations). The unit tests, the typecheck and the Node smoke test pass in CI
+  on Windows and Linux (2026-09-30); the first Windows run found an SQLite file left open, now
+  fixed. Nothing has run there against a real Unity Editor.
 - The idle gate and the rules block in a real opencode session (see the table).
 - PlayMode tests, `unity_run_method`.
 - Scene tools not exercised live: array properties other than materials. (`unity_component_remove`
@@ -105,8 +106,7 @@ Last updated: 2026-09-30. Version 0.1.0. Source on GitHub
 1. Watch a small model use the flat scene tools in a real session and fix what it trips on. Every
    fix so far came from reading real sessions (see `small-model-tool-design.md`).
 2. Confirm the idle gate and the rules block in a real session.
-3. Publish to npm. The GitHub repository exists: check that its first CI run passes on Windows
-   and Linux. Open point: copyright holder line in `LICENSE`.
+3. Publish to npm. Open point: copyright holder line in `LICENSE`.
 4. Reduce the tool count for small models (for example hide `unity_docs_install` once the docs are
    installed, and the scene tools when no Editor is connected).
 5. Shell guard for `rm`/`mv` on assets; more lints (`Destroy` in loops, `CompareTag`).
