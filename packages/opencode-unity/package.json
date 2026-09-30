@@ -1,6 +1,6 @@
 {
   "name": "opencode-unity",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "opencode plugin that keeps small/local models honest on Unity projects: compile-on-edit, compiler errors explained with the real Unity API, offline docs, Unity lints, protected files.",
   "keywords": [
     "opencode",
@@ -48,7 +48,7 @@
     "docs:install": "bun run src/cli.ts docs install",
     "prepack": "bun run scripts/prepack.ts",
     "build": "bun run scripts/bundle.ts",
-    "test:node": "bun run build && node --no-warnings test/node-smoke.mjs"
+    "test:node": "bun run build && node --no-warnings test/node-smoke.mjs && bun test/node-smoke.mjs"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.18.31"

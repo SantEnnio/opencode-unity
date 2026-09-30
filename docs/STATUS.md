@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-09-30. Version 0.1.0. Source on GitHub
+Last updated: 2026-09-30. Version 0.2.0. Source on GitHub
 ([SantEnnio/opencode-unity](https://github.com/SantEnnio/opencode-unity)), no npm release yet.
 
 ## What exists
@@ -13,19 +13,21 @@ Last updated: 2026-09-30. Version 0.1.0. Source on GitHub
 | Offline docs: download, ZIP64 reader, HTML to text, SQLite FTS5, package docs | Done. Unity 6000.0: 34,331 pages, 61 MB index, about 20 s to install |
 | Unity-specific lints | Done, unit-tested. Regex based: expect some false positives/negatives on unusual formatting |
 | Guards on protected files | Done, verified |
-| Idle gate (re-prompt when the model stops on a red build) | Done, **only tested with a fake client** |
-| Rules block in the system prompt | Done, **relies on an opencode hook marked experimental; not confirmed to reach the model** |
+| Idle gate (re-prompt when the model stops on a red build) | Done. Verified live in opencode 2.0.20: the model stopped on a red build, got the message twice, and went back to work. In opencode 1 only tested with a fake client |
+| Rules block in the system prompt | Done. Confirmed to reach the model in opencode 2.0.20. In opencode 1 it relies on a hook marked experimental and is not confirmed |
 | `unity-coder` agent, `/unity` command, `unity_status` | Done. Agent and command registration verified in opencode |
 | Open Editor through Unity's Pipeline package: recompile, Console, tests | Done, verified live. Direct HTTP client, about 50 ms per call |
-| `unity_pipeline_install` behind opencode's permission prompt | Done, verified in opencode desktop |
+| `unity_pipeline_install` only after the user agrees | Done. opencode 1: its permission prompt, verified in desktop. opencode 2 has none a plugin can raise: the first call has the model ask, the second installs only if the user replied in between. Verified in 2.0.20 |
 | Scene editing, flat tools (`unity_object_*`, `unity_component_*`, `unity_prefab_*`, `unity_scene_save`) | Done, verified live and **driven by a small model**: a 168-call session built a car (2026-09-20). Four failures found there are fixed, covered by tests, and the rename/re-parent one re-checked against qwen3.6-35b-a3b: the same task went from 10 calls with 3 rejections to 5 with none. See `small-model-tool-design.md` |
 | Scene editing, batch tool (`unity_scene_edit`) | Done, opt-in (`sceneTools: "batch"`). Small models cannot drive it reliably |
 | Closed-Editor routes: batch-mode compile, `unity test` / `-runTests` | Done, verified live |
 | `unity_run_method` (whitelisted `-executeMethod`) | Written, **never run** |
-| Runs on Bun (opencode CLI) and Node (opencode desktop, Electron) | Done. Verified inside opencode desktop's own runtime; CI has a Node smoke test |
+| opencode 2 | Done (2026-09-30), one bundle for both: `src/host-v1.ts` and `src/host-v2.ts` over `src/core.ts`. Verified live in 2.0.20 (CLI inside the desktop app): loading, `unity_status`, compile on edit, guards, idle gate, rules, `/unity`, `unity-coder`, consent, flat scene tools with the open Editor. Same bundle re-checked in opencode 1.18.31 |
+| Runs on Bun (opencode 1 CLI, opencode 2) and Node (opencode 1 desktop, Electron) | Done. Verified inside both desktops' runtimes; the smoke test loads the bundle under both plugin APIs on Node and on Bun, in CI too |
+| Windows installer from a GitHub release (`install.ps1`: no Bun, git or admin rights) | Done. CI installs the release package with Windows PowerShell 5.1 and PowerShell 7, loads it and uninstalls. **Not yet run on a classroom machine** |
 | Global installer, npm packaging (`dist/` bundle + prebuilt exporter) | Done. `npm pack --dry-run` checked; **installing from npm untested** (nothing published) |
 
-104 unit tests, typecheck clean, Node smoke test passing.
+107 unit tests, typecheck clean, smoke test passing on Node and Bun.
 
 ## Not verified
 
@@ -33,7 +35,11 @@ Last updated: 2026-09-30. Version 0.1.0. Source on GitHub
   lock detection, cache locations). The unit tests, the typecheck and the Node smoke test pass in CI
   on Windows and Linux (2026-09-30); the first Windows run found an SQLite file left open, now
   fixed. Nothing has run there against a real Unity Editor.
-- The idle gate and the rules block in a real opencode session (see the table).
+- The idle gate and the rules block in a real opencode 1 session (see the table).
+- `com.unity.pipeline` 0.8.0-exp.1: `unity pipeline install` now installs it, and everything was
+  developed against 0.7.0-exp.1. The opencode 2 checks above ran against 0.7.0-exp.1.
+- Two Editors open at once: both claim the Pipeline port 7800 and the second stays unreachable
+  (seen 2026-09-30). The plugin does not detect this yet; `/unity` only says "not connected".
 - PlayMode tests, `unity_run_method`.
 - Scene tools not exercised live: array properties other than materials. (`unity_component_remove`
   and re-parenting/renaming through `unity_object_modify` were exercised in the 2026-09-20
@@ -105,14 +111,17 @@ Last updated: 2026-09-30. Version 0.1.0. Source on GitHub
 
 1. Watch a small model use the flat scene tools in a real session and fix what it trips on. Every
    fix so far came from reading real sessions (see `small-model-tool-design.md`).
-2. Confirm the idle gate and the rules block in a real session.
-3. First release, `v0.1.0` (see CONTRIBUTING.md). After it, switch npm publishing to trusted
-   publishing and drop the `NPM_TOKEN` secret.
-4. Reduce the tool count for small models (for example hide `unity_docs_install` once the docs are
+2. Confirm the idle gate and the rules block in a real opencode 1 session.
+3. Run `install.ps1` on a classroom machine with opencode 2, then a full session there.
+4. Check the plugin against `com.unity.pipeline` 0.8.0-exp.1, and detect two Editors fighting
+   over the Pipeline port.
+5. npm: publishing is off (repository variable `NPM_PUBLISH`). To turn it on, use a token that
+   can bypass 2FA, or trusted publishing after a first manual publish.
+6. Reduce the tool count for small models (for example hide `unity_docs_install` once the docs are
    installed, and the scene tools when no Editor is connected).
-5. Shell guard for `rm`/`mv` on assets; more lints (`Destroy` in loops, `CompareTag`).
-6. Better ranking between Manual and Scripting Reference in `unity_docs_search`.
-7. Runtime module: let the model learn what the game does while it plays. Designed and measured,
+7. Shell guard for `rm`/`mv` on assets; more lints (`Destroy` in loops, `CompareTag`).
+8. Better ranking between Manual and Scripting Reference in `unity_docs_search`.
+9. Runtime module: let the model learn what the game does while it plays. Designed and measured,
    not built — see [runtime-module.md](runtime-module.md).
 
 ## Decisions worth remembering

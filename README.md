@@ -9,27 +9,26 @@ result of the edit they just made.
 
 ## Install
 
+Works with opencode 1 and opencode 2, CLI and desktop (checked on 1.18.31 and 2.0.20).
+
 Requirements: the .NET SDK (6.0 or newer) on `PATH`, and the project's Unity Editor version
 installed through Unity Hub (or `UNITY_EDITOR_PATH` pointing at it).
 
-Add the plugin to your opencode config (`~/.config/opencode/opencode.json` for every project, or
-`opencode.json` in one project) and restart opencode (CLI or desktop):
+The plugin is not on npm yet.
 
-```json
-{
-  "plugin": ["opencode-unity"]
-}
+**Windows, from a release** (no Bun, git or administrator rights needed). In PowerShell:
+
+```powershell
+irm https://github.com/SantEnnio/opencode-unity/releases/latest/download/install.ps1 | iex
 ```
 
-The plugin activates when the opened folder is, contains, or sits inside a Unity project, and
-does nothing anywhere else.
+Run it again to update. For a classroom, download `install.ps1` and the `opencode-unity-*.tgz`
+of a [release](https://github.com/SantEnnio/opencode-unity/releases) once, put them on a shared
+drive, and on each machine run
+`powershell -ExecutionPolicy Bypass -File install.ps1 -Package opencode-unity-0.2.0.tgz`.
+`-Uninstall` removes the plugin.
 
-**Is it on?** Open a Unity project and type `/unity`: the plugin reports that it is active, what
-it found (Unity version, Editor install, .NET SDK, docs, Unity CLI) and which route compile, tests
-and console will take. The `unity-coder` agent also appears in the agent list, only in Unity
-projects. At startup it writes one line to the opencode log (`opencode-unity x.y.z active: ...`).
-
-From a clone of this repository instead (needs [Bun](https://bun.sh)):
+**From a clone of this repository** (any OS, needs [Bun](https://bun.sh)):
 
 ```sh
 cd packages/opencode-unity
@@ -37,8 +36,25 @@ bun install
 bun run install:global      # bun run uninstall:global to remove
 ```
 
-This bundles the plugin into `~/.config/opencode/plugins/opencode-unity.js`, with its assets in
-`~/.config/opencode/opencode-unity/`.
+Both put the plugin in `~/.config/opencode/plugins/opencode-unity.js` (on Windows
+`%USERPROFILE%\.config\opencode\...`), with its assets in `~/.config/opencode/opencode-unity/`.
+Both opencode generations load plugins from that folder:
+restart opencode (opencode 2 also reloads it on its own when the file changes).
+
+The plugin activates when the opened folder is, contains, or sits inside a Unity project, and
+does nothing anywhere else.
+
+**Is it on?** Open a Unity project and type `/unity`: the plugin reports that it is active, what
+it found (Unity version, Editor install, .NET SDK, docs, Unity CLI) and which route compile, tests
+and console will take. The `unity-coder` agent also appears in the agent list, only in Unity
+projects. At startup it writes one line (`opencode-unity x.y.z active: ...`) to the opencode log
+in opencode 1, and to its own log in opencode 2, which gives plugins no log: `opencode-unity.log`
+in the user cache folder (`~/Library/Caches/opencode-unity`, `%LOCALAPPDATA%\opencode-unity`,
+`$XDG_CACHE_HOME/opencode-unity`).
+
+**opencode 1 and 2 on the same machine.** They share `~/.local/share/opencode`, and opencode 2
+migrates the session database there: after that, opencode 1 stops with `no such column:
+project_id`. Pick one per machine, or point opencode 1 at another data folder (`XDG_DATA_HOME`).
 
 The offline documentation is optional and installed once per Unity release stream (about 400 MB
 download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`, set
@@ -84,7 +100,7 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
 | `unity_docs_search` / `unity_docs_read` | Offline Manual + Scripting Reference + docs of the installed packages (SQLite FTS5) |
 | `unity_docs_install` | Background download + indexing of the offline documentation |
 | `unity_scene_view`, `unity_object_*`, `unity_component_*`, `unity_prefab_*`, `unity_scene_save` | Read and change the open scene through the Editor: objects, components, values, references, prefabs. One flat tool per action, validated before anything is touched (see below) |
-| `unity_pipeline_install` | Adds the Pipeline package to the project, after the user approves the permission prompt |
+| `unity_pipeline_install` | Adds the Pipeline package to the project, only after the user has agreed |
 | `unity_compile` | Explicit check. Uses Unity's own compiler when it can (see below) |
 | `unity_test` | EditMode/PlayMode tests, failures only |
 | `unity_console` | Console of the open Editor (runtime errors, stack traces) |
@@ -101,11 +117,14 @@ worse, editing the `.unity` YAML by hand. The plugin blocks the YAML and gives i
 instead, by talking to the Editor you already have open.
 
 This needs Unity's **Pipeline package** (`com.unity.pipeline`, experimental) in the project. Just
-ask the agent ("install the Pipeline package"): it calls `unity_pipeline_install`, opencode shows a
-permission prompt, and only after you approve does the tool run `unity pipeline install` for the
-project (it needs the official Unity CLI). Or run that command yourself in the project folder.
+ask the agent ("install the Pipeline package"): it calls `unity_pipeline_install`, and only after
+you agree does the tool run `unity pipeline install` for the project (it needs the official Unity
+CLI). Or run that command yourself in the project folder.
 
-The package is never installed without that approval: it changes `Packages/manifest.json`. If the
+The package is never installed without your approval: it changes `Packages/manifest.json`. In
+opencode 1 the approval is opencode's permission prompt. opencode 2 has no prompt a plugin can
+raise, so the first call only tells the model to ask you, and a second call installs only if you
+have replied in between. If the
 Editor is open, click its window afterwards so it imports the package. `/unity` tells you whether
 the package is installed and connected. Once it is, the plugin talks to the package's local HTTP
 server directly (loopback only, token from `Library/Pipeline/`), so calls take milliseconds.
@@ -232,7 +251,7 @@ detection). Exercised on macOS only so far.
 ## Layout
 
 ```
-packages/opencode-unity/   the plugin (TypeScript; runs on Bun in the opencode CLI and on Node in opencode desktop)
+packages/opencode-unity/   the plugin (TypeScript; one bundle for opencode 1 and 2, on Bun and on Node)
 tools/symbol-exporter/     .NET tool (Mono.Cecil) that dumps the API of a set of DLLs
 ```
 

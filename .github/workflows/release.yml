@@ -50,14 +50,16 @@ jobs:
         run: |
           # A re-run (for example after a failed npm publish) replaces the asset of the existing release.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" opencode-unity-*.tgz --clobber
+            gh release upload "$GITHUB_REF_NAME" opencode-unity-*.tgz ../../install.ps1 --clobber
             exit 0
           fi
           flags=""
           if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
-          gh release create "$GITHUB_REF_NAME" opencode-unity-*.tgz --title "$GITHUB_REF_NAME" --generate-notes $flags
+          gh release create "$GITHUB_REF_NAME" opencode-unity-*.tgz ../../install.ps1 --title "$GITHUB_REF_NAME" --generate-notes $flags
 
+      # Off until the repository variable NPM_PUBLISH is set to "true".
       - name: npm publish
+        if: vars.NPM_PUBLISH == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |

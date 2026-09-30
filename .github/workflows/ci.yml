@@ -30,3 +30,41 @@ jobs:
         with:
           node-version: 24
       - run: bun run test:node
+
+  # The Windows installer used in classrooms, run on the package a release would ship.
+  installer:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh] # Windows PowerShell 5.1 (preinstalled) and PowerShell 7
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build the package
+        working-directory: packages/opencode-unity
+        run: |
+          bun install --frozen-lockfile
+          npm pack
+      - name: Install, load, uninstall
+        run: |
+          $env:OPENCODE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "opencode-config"
+          $package = (Get-Item packages/opencode-unity/opencode-unity-*.tgz).FullName
+          & ./install.ps1 -Package $package
+          $plugin = Join-Path $env:OPENCODE_CONFIG_DIR "plugins\opencode-unity.js"
+          $dll = Join-Path $env:OPENCODE_CONFIG_DIR "opencode-unity\symbol-exporter\symbol-exporter.dll"
+          if (-not (Test-Path $plugin) -or -not (Test-Path $dll)) { throw "files missing after install" }
+          $url = ([System.Uri]$plugin).AbsoluteUri
+          node --input-type=module -e "const m = await import('$url'); const p = m.default; if (p.id !== 'opencode-unity' || typeof p.setup !== 'function' || typeof p.server !== 'function') throw new Error('bad plugin export'); console.log('installed plugin loads')"
+          if ($LASTEXITCODE -ne 0) { throw "the installed plugin does not load" }
+          & ./install.ps1 -Uninstall
+          if (Test-Path $plugin) { throw "uninstall left the plugin in place" }
