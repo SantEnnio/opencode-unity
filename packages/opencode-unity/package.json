@@ -14,6 +14,13 @@
   ],
   "author": "Ennio Pirolo (Ambiens VR)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SantEnnio/opencode-unity.git",
+    "directory": "packages/opencode-unity"
+  },
+  "homepage": "https://github.com/SantEnnio/opencode-unity#readme",
+  "bugs": "https://github.com/SantEnnio/opencode-unity/issues",
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
