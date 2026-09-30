@@ -32,5 +32,6 @@ the Unity version, and the OS.
 
 The `Release` workflow runs the full CI, builds the package (`npm pack`), attaches it to a GitHub
 release and publishes it to npm with provenance. A tag with a pre-release suffix (`v0.2.0-beta.1`)
-becomes a GitHub pre-release and the npm `next` tag. The workflow needs an npm automation token in
-the repository secret `NPM_TOKEN`.
+becomes a GitHub pre-release and the npm `next` tag. The workflow needs an npm granular access token with
+"Bypass two-factor authentication" enabled, in the repository secret `NPM_TOKEN`. A failed run can
+be re-run: the existing GitHub release is updated, not duplicated.

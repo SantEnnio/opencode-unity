@@ -48,6 +48,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A re-run (for example after a failed npm publish) replaces the asset of the existing release.
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" opencode-unity-*.tgz --clobber
+            exit 0
+          fi
           flags=""
           if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
           gh release create "$GITHUB_REF_NAME" opencode-unity-*.tgz --title "$GITHUB_REF_NAME" --generate-notes $flags
