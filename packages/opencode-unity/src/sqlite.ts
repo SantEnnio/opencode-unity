@@ -9,7 +9,7 @@ export interface Statement<Row, Params extends unknown[] = unknown[]> {
   run(...params: Params): RunResult
 }
 
-type DriverStatement = { all(...p: unknown[]): unknown[]; get(...p: unknown[]): unknown; run(...p: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint } }
+type DriverStatement = { finalize?(): void; all(...p: unknown[]): unknown[]; get(...p: unknown[]): unknown; run(...p: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint } }
 type DriverDatabase = { prepare(sql: string): DriverStatement; exec(sql: string): void; close(): void }
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined"
@@ -63,6 +63,9 @@ export class Database {
   }
 
   close() {
+    // bun:sqlite defers the close while a prepared statement is alive, which keeps the file open:
+    // on Windows it then cannot be renamed or deleted. node:sqlite finalizes them itself on close.
+    for (const statement of this.statements.values()) statement.finalize?.()
     this.statements.clear()
     this.db.close()
   }
