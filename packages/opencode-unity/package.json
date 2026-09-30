@@ -12,7 +12,7 @@
     "local-llm",
     "guardrails"
   ],
-  "author": "Ennio Pirolo (Ambiens VR)",
+  "author": "Ennio Pirolo",
   "license": "MIT",
   "repository": {
     "type": "git",

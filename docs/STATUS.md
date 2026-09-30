@@ -106,8 +106,8 @@ Last updated: 2026-09-30. Version 0.1.0. Source on GitHub
 1. Watch a small model use the flat scene tools in a real session and fix what it trips on. Every
    fix so far came from reading real sessions (see `small-model-tool-design.md`).
 2. Confirm the idle gate and the rules block in a real session.
-3. First release: add the `NPM_TOKEN` secret, then tag `v0.1.0` (see CONTRIBUTING.md). Open point:
-   copyright holder line in `LICENSE`.
+3. First release, `v0.1.0` (see CONTRIBUTING.md). After it, switch npm publishing to trusted
+   publishing and drop the `NPM_TOKEN` secret.
 4. Reduce the tool count for small models (for example hide `unity_docs_install` once the docs are
    installed, and the scene tools when no Editor is connected).
 5. Shell guard for `rm`/`mv` on assets; more lints (`Destroy` in loops, `CompareTag`).
