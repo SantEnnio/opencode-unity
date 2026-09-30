@@ -34,6 +34,10 @@ file; "limits on adding several components" was its own broken JSON).
 | Ignored "STOP" and called again | A message is only advice | From the third identical failing call on, the call is not executed at all |
 | A field was silently ignored (`"primitive:"` again), the tool said "applied", and the object was created empty | The tool was tolerant in the wrong way | Unknown fields are errors. Never report success for a request that was only partly understood |
 | Degenerate output in a session that had been running for hours | Context far beyond what the model handles well | Nothing in the tool. New session, smaller tasks |
+| Renamed `/Car` to `PlayerCar`, moved it under `/CarGroup`, then addressed `/PlayerCar/Wheel_FL` for seven calls in a row. Later repeated a move that had just succeeded | The success message said "Done. Scene changed" and never said where the object ended up. The model was guessing a path it could not know | Rename and re-parent report the new path: `'/Car' is now '/CarGroup/PlayerCar'. Its children moved with it. Use the new path from now on.` The path was already computed, just never said |
+| Added a second `Rigidbody` to a wheel that had one | We sent it to Unity, which refused it and logged an error in the user's Console | A short list of `[DisallowMultipleComponent]` types checked against the simulated hierarchy. Colliders stay out: several on one object are legitimate |
+| Read the scene tree, then addressed `/CarGroup/Car/Body` three times: it took two consecutive roots for a parent and a child | An empty root renders as a bare name, and the root under it too, with indented children below. Only the indentation column said otherwise, and the model did not hold it | Roots carry their leading `/`: `/CarGroup`, `/Car`, then `  Body`. No extra line, and the tree now shows the path syntax the tools want. Same task, real model: 10 calls with 3 rejections became 5 calls with none |
+| Wrote `WheelVisual.cs`, added it as a component in the next call, got "Could not resolve component type". Diagnosed it correctly ("it probably needs to recompile") and still gave up, then deleted the script with `bash rm` | The file was on disk, so our own check passed; Unity only knows a MonoBehaviour once it has compiled it. The error named the fault, not the fix | Unity's error is translated: `WheelVisual.cs is in the project but Unity has not compiled it yet. Call unity_compile, wait for it to pass, then add the component again.` |
 
 ## Rules of thumb
 
@@ -56,3 +60,9 @@ file; "limits on adding several components" was its own broken JSON).
 10. **Few parameters, few tools.** Every optional parameter will be filled in sooner or later, and
     every tool costs context the model needs for the task.
 11. **Short sessions.** Past a certain context length the failures stop being about your tool.
+12. **An operation that moves something says where it ended up.** Anything that changes an
+    identifier — a path, a name, a parent — must report the new one on success. The model cannot
+    see the scene, and it will address what it last knew.
+13. **Every line costs.** One real session called `unity_scene_view` 32 times: three extra lines in
+    that output is a hundred lines of the context the task needed. Put a hint where the question is
+    asked, not everywhere it might be.

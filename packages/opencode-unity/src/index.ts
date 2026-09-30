@@ -263,6 +263,11 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
   void graphFor(startupProject)
   if (options.docs === "auto" && !docsInstalled(startupProject.version)) startDocsInstall(startupProject)
 
+  // Small models break nested JSON arguments, so by default they get one flat tool per action.
+  // The batch tool (several operations in one transaction) suits stronger models. Decided here
+  // because unity_scene_view has to point at the editing tools the mode actually registers.
+  const sceneMode = options.sceneTools ?? "simple"
+
   const hooks: Hooks = {
     "tool.execute.before": async (input, output) => {
       for (const file of writtenPaths(input.tool, output.args, directory)) {
@@ -455,7 +460,7 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
         async execute(args, context) {
           const project = projectAt(context.directory)
           if (!(await editorConnected(project.root, { signal: context.abort }))) return NO_EDITOR
-          return viewScene(pipeline(project, context.abort), args.path)
+          return viewScene(pipeline(project, context.abort), args.path, { flatTools: sceneMode !== "batch" })
         },
       }),
 
@@ -595,9 +600,6 @@ export const UnityPlugin: Plugin = async ({ client, directory }, rawOptions) => 
     },
   }
 
-  // Small models break nested JSON arguments, so by default they get one flat tool per action.
-  // The batch tool (several operations in one transaction) suits stronger models.
-  const sceneMode = options.sceneTools ?? "simple"
   if (sceneMode === "simple") delete hooks.tool!.unity_scene_edit
   if (sceneMode !== "batch") Object.assign(hooks.tool!, sceneTools({ connect: connectScene, notConnected: NO_EDITOR, breakLoop, stuck }))
 

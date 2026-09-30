@@ -41,6 +41,30 @@ export type EditRequest = { operations: unknown[]; save?: boolean; dryRun?: bool
 type BatchResult = { results: { command: string; success: boolean; error?: string; skipped?: boolean; result?: unknown }[]; applied: number; reverted?: boolean }
 
 const PRIMITIVES = ["cube", "sphere", "capsule", "cylinder", "plane", "quad"]
+
+/**
+ * Components Unity marks [DisallowMultipleComponent]. The symbol graph has no attributes, so this
+ * is a pragmatic list of the ones a model actually adds twice (a real session added a second
+ * Rigidbody to a wheel). Being short is safe: a type that is missing here just falls through to
+ * Unity as before. Colliders are absent on purpose — several on one object are legitimate.
+ */
+const SINGLE_INSTANCE = new Set([
+  "Rigidbody",
+  "Rigidbody2D",
+  "Animator",
+  "Animation",
+  "Camera",
+  "AudioListener",
+  "CharacterController",
+  "MeshFilter",
+  "MeshRenderer",
+  "SkinnedMeshRenderer",
+  "SpriteRenderer",
+  "LineRenderer",
+  "TrailRenderer",
+  "Canvas",
+  "NavMeshAgent",
+])
 const OPS = ["create", "modify", "add_component", "remove_component", "set", "delete", "instantiate"]
 const MAX_TREE_LINES = 200
 
@@ -321,7 +345,11 @@ function renderTree(nodes: HierarchyNode[], depth: number, lines: string[]) {
   for (const node of nodes) {
     if (lines.length >= MAX_TREE_LINES) return
     const components = node.components.filter((c) => c !== "Transform")
-    lines.push(`${"  ".repeat(depth)}${node.name}${node.activeSelf === false ? " (inactive)" : ""}${components.length > 0 ? `  [${components.join(", ")}]` : ""}`)
+    // Roots carry their leading "/": indentation alone was misread by a real model, which took an
+    // empty root ("CarGroup") for the parent of the root below it and addressed three children
+    // wrongly. The slash also shows the path syntax the tools want, at no extra line.
+    const name = depth === 0 ? `/${node.name}` : node.name
+    lines.push(`${"  ".repeat(depth)}${name}${node.activeSelf === false ? " (inactive)" : ""}${components.length > 0 ? `  [${components.join(", ")}]` : ""}`)
     renderTree(node.children ?? [], depth + 1, lines)
   }
 }
@@ -348,7 +376,41 @@ function renderValue(value: unknown): string {
   return JSON.stringify(value)
 }
 
-export async function viewScene(call: PipelineCall, path?: string): Promise<string> {
+export type TagsLayers = { tags: string[]; layers: string[] }
+
+/** Tags and layers defined in the project, or null when the Editor would not say. */
+export async function fetchTagsLayers(call: PipelineCall): Promise<TagsLayers | null> {
+  const response = await call("get_tags_layers")
+  if (!response.ok) return null
+  return (response.result as { values?: TagsLayers }).values ?? null
+}
+
+/**
+ * The model cannot create a tag or a layer (ProjectSettings/ is guarded), so every look at the
+ * scene carries the list it is allowed to choose from. Without it, the only way it learns is by
+ * sending a name that does not exist, which leaves an error in the user's Console.
+ */
+function renderTagsLayers(values: TagsLayers | null): string[] {
+  const lines: string[] = []
+  if (values?.tags?.length) lines.push(`Tags: ${values.tags.join(", ")}`)
+  if (values?.layers?.length) lines.push(`Layers: ${values.layers.join(", ")}`)
+  if (lines.length === 0) return []
+  return ["", ...lines, "Only these exist. The user adds new ones in Project Settings > Tags and Layers."]
+}
+
+/**
+ * The editing tool to point at depends on which ones the mode registered: unity_scene_edit is
+ * deleted in the default "simple" mode, so naming it there sends the model at a tool it cannot see.
+ */
+function nextStep(target: string, flatTools: boolean, example: { component: string; assignment: string } | null): string {
+  if (!flatTools) return `→ change values with unity_scene_edit: {"op":"set","target":"${target}","component":"<Component>","values":{...}}`
+  if (!example) return "→ change a value with unity_component_set, or add behaviour with unity_component_add."
+  return `→ change a value with unity_component_set: path "${target}", component "${example.component}", values "${example.assignment}"`
+}
+
+/** `flatTools`: unity_component_set and friends are registered (every mode but "batch"). */
+export async function viewScene(call: PipelineCall, path?: string, options: { flatTools?: boolean } = {}): Promise<string> {
+  const flatTools = options.flatTools ?? true
   const response = await call("get_scene_hierarchy")
   if (!response.ok) return `[unity] The scene could not be read: ${response.error}`
   const hierarchy = response.result as Hierarchy
@@ -357,7 +419,8 @@ export async function viewScene(call: PipelineCall, path?: string): Promise<stri
     const lines: string[] = []
     renderTree(hierarchy.roots, 0, lines)
     if (lines.length >= MAX_TREE_LINES) lines.push(`... (truncated at ${MAX_TREE_LINES} objects)`)
-    return [`Scene: ${sceneTitle(hierarchy)}`, "", ...lines, "", '→ unity_scene_view("/Object/Path") shows the components and values of one object.'].join("\n")
+    const tagsLayers = renderTagsLayers(await fetchTagsLayers(call))
+    return [`Scene: ${sceneTitle(hierarchy)}`, "", ...lines, ...tagsLayers, "", '→ unity_scene_view("/Object/Path") shows the components and values of one object.'].join("\n")
   }
 
   const wanted = normalizePath(path)
@@ -376,17 +439,23 @@ export async function viewScene(call: PipelineCall, path?: string): Promise<stri
   const results = batch.ok ? (batch.result as BatchResult).results : []
 
   const lines = [`${node.hierarchyPath}${node.activeSelf === false ? " (inactive)" : ""}`, `children: ${(node.children ?? []).map((c) => c.name).join(", ") || "none"}`]
+  // A next step built from a value that is actually on screen beats a <placeholder> the model
+  // has to fill in: it is a call it can copy, with names it has just read.
+  let example: { component: string; assignment: string } | null = null
   node.components.forEach((component, i) => {
     lines.push("", `${component}:`)
     const result = results[i]
     if (!result?.success) return lines.push(`  (not readable${result?.error ? `: ${result.error}` : ""})`)
-    const properties = (result.result as { properties?: Record<string, unknown> }).properties ?? {}
+    const properties = (result.result as { properties?: Record<string, unknown> } | undefined)?.properties ?? {}
     for (const [name, value] of Object.entries(properties)) {
       if (typeof value === "string" && value.startsWith("<unsupported")) continue
       lines.push(`  ${friendlyName(name)} = ${renderValue(value)}`)
+      if (!example && (typeof value === "number" || typeof value === "boolean")) example = { component, assignment: `${friendlyName(name)}=${renderValue(value)}` }
     }
   })
-  lines.push("", `→ change values with unity_scene_edit: {"op":"set","target":"${node.hierarchyPath}","component":"<Component>","values":{...}}`)
+  // No tags/layers here on purpose: a real session called this view 28 times against 4 whole-scene
+  // views, and three extra lines each time is context a small model needs for the task.
+  lines.push("", nextStep(node.hierarchyPath, flatTools, example))
   return lines.join("\n")
 }
 
@@ -472,14 +541,9 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
     }
   }
   const errors: string[] = []
-  let tagsLayers: { tags: string[]; layers: string[] } | null = null
-
-  const loadTagsLayers = async () => {
-    if (tagsLayers) return tagsLayers
-    const response = await call("get_tags_layers")
-    tagsLayers = response.ok ? ((response.result as { values?: { tags: string[]; layers: string[] } }).values ?? null) : null
-    return tagsLayers
-  }
+  const moved = new Map<string, string>() // object path before -> after, for the success message
+  let tagsLayers: TagsLayers | null = null
+  const loadTagsLayers = async () => (tagsLayers ??= await fetchTagsLayers(call))
 
   // One raw entry may expand into several operations: keep what the model actually sent for messages.
   const expanded = request.operations.flatMap((raw) => normalizeOps(raw).map((op) => ({ op, raw })))
@@ -536,8 +600,13 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
     const addComponent = (path: string, type: string) => {
       const problem = checkComponentType(type, planner)
       if (problem) return fail(problem)
+      const simple = type.slice(type.lastIndexOf(".") + 1)
+      // Unity refuses the duplicate anyway, and its refusal lands as an error in the user's Console.
+      if (SINGLE_INSTANCE.has(simple) && objects.get(path)!.has(simple)) {
+        return fail(`'${path}' already has a ${simple} and cannot have two. Set its values instead of adding it again, or remove it first.`)
+      }
       push("add_component", { target: path, type })
-      objects.get(path)!.add(type.slice(type.lastIndexOf(".") + 1))
+      objects.get(path)!.add(simple)
     }
 
     const setValues = async (path: string, component: string, values: Record<string, unknown>) => {
@@ -649,6 +718,10 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
             rekey(renamed)
           }
         }
+        // Renaming or re-parenting changes the path of the object AND of every child. A model
+        // that is only told "done" keeps addressing the old path: in a real session that cost
+        // seven rejected calls in a row, and one move repeated because nothing confirmed it.
+        if (current !== path) moved.set(path, current)
         break
       }
       case "add_component": {
@@ -751,7 +824,17 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
     const error = batch.results[failedAt]!.error ?? ""
     const missing = /No asset at path '([^']+)'/.exec(error)?.[1]
     const onDisk = missing && planner.assetExists?.(missing)
-    const hint = onDisk ? ` The file is on disk but Unity could not import it, so it is corrupt or not an asset Unity understands. Do not retry with the same path. For a plain color use "color" on create/modify instead, and tell the user about '${missing}'.` : ""
+    // A script written moments ago is on disk, so our own check passes, but Unity only knows a
+    // MonoBehaviour once it has compiled it. Seen in a real session: the model wrote WheelVisual.cs,
+    // added it, got "Could not resolve component type", guessed the cause correctly and still gave up.
+    const unresolved = /Could not resolve component type '([^']+)'/.exec(error)?.[1]
+    const simple = unresolved?.slice(unresolved.lastIndexOf(".") + 1)
+    const uncompiled = simple && planner.scripts.has(simple)
+    const hint = onDisk
+      ? ` The file is on disk but Unity could not import it, so it is corrupt or not an asset Unity understands. Do not retry with the same path. For a plain color use "color" on create/modify instead, and tell the user about '${missing}'.`
+      : uncompiled
+        ? ` ${simple}.cs is in the project but Unity has not compiled it yet. Call unity_compile, wait for it to pass, then add the component again.`
+        : ""
     const which = operations.length > 1 ? `Operation ${source + 1} (${operations[source]!.op}) failed in Unity` : "Unity refused it"
     return `[unity] Scene NOT changed${operations.length > 1 ? " (everything was rolled back)" : ""}. ${which}: ${error}${hint}`
   }
@@ -761,6 +844,7 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
       ? "[unity] Done. Scene changed (the user can undo it with Ctrl+Z)."
       : `[unity] Scene changed: ${operations.length} operations applied as one Undo step (the user can revert with Ctrl+Z).`,
   ]
+  for (const [before, after] of moved) lines.push(`'${before}' is now '${after}'. Its children moved with it. Use the new path from now on.`)
   for (const warning of [...new Set(warnings)]) lines.push(`WARNING: ${warning}`)
   if (materials.size > 0) lines.push(`Materials written (not undoable): ${[...materials.keys()].join(", ")}.`)
   if (request.save) {

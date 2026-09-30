@@ -34,7 +34,7 @@ function fakeEditor(overrides: Record<string, (params: any) => unknown> = {}) {
           const type = ops[1]!.params.type
           return { ok: true, result: { applied: 4, results: [{ command: "create_gameobject", success: true }, { command: "add_component", success: true }, { command: "get_component_properties", success: true, result: { properties: type === "Rigidbody" ? rigidbody : follower } }, { command: "delete_gameobject", success: true }] } }
         }
-        return { ok: true, result: { applied: ops.length, results: ops.map((o) => ({ command: o.command, success: true })) } }
+        return { ok: true, result: { applied: ops.length, results: ops.map((o) => ({ command: o.command, success: true, ...(o.command === "get_component_properties" && { result: { properties: o.params.type === "Rigidbody" ? rigidbody : follower } }) })) } }
       }
       default:
         return { ok: true, result: {} }
@@ -61,11 +61,85 @@ describe("unity_scene_view", () => {
   test("tree view", async () => {
     const out = await viewScene(fakeEditor().call)
     expect(out).toContain("Scene: Assets/Scenes/Main.unity")
-    expect(out).toContain("Player  [Rigidbody]\n  Gun")
+    // Roots keep their slash, children do not: a model read two roots as parent and child.
+    expect(out).toContain("/Player  [Rigidbody]\n  Gun")
+    expect(out).toContain("/Main Camera")
   })
 
   test("unknown path suggests the closest object", async () => {
     expect(await viewScene(fakeEditor().call, "/Playr")).toContain("Closest: /Player")
+  })
+
+  // The model cannot create a tag or a layer, so the whole-scene view shows what it may pick.
+  // The per-object view deliberately does not: it is called many times more often, and three
+  // lines per call is context the task needs.
+  test("the whole-scene view lists the tags and layers the project has", async () => {
+    const out = await viewScene(fakeEditor().call)
+    expect(out).toContain("Tags: Untagged, Player")
+    expect(out).toContain("Layers: Default, UI")
+    expect(out).toContain("Project Settings > Tags and Layers")
+
+    const object = await viewScene(fakeEditor().call, "/Player")
+    expect(object).not.toContain("Tags:")
+  })
+
+  // "simple" mode deletes unity_scene_edit, so naming it there points at a tool that is not registered.
+  test("the next step names an editing tool the current mode registers", async () => {
+    const flat = await viewScene(fakeEditor().call, "/Player")
+    expect(flat).toContain('unity_component_set: path "/Player", component "Transform", values "speed=2"')
+    expect(flat).not.toContain("unity_scene_edit")
+
+    const batch = await viewScene(fakeEditor().call, "/Player", { flatTools: false })
+    expect(batch).toContain('unity_scene_edit: {"op":"set","target":"/Player"')
+    expect(batch).not.toContain("unity_component_set")
+  })
+
+  test("the scene is still shown when the Editor does not answer about tags and layers", async () => {
+    const editor = fakeEditor()
+    const call: PipelineCall = async (command, params) => (command === "get_tags_layers" ? { ok: false, error: "unknown command" } : editor.call(command, params))
+    const out = await viewScene(call)
+    expect(out).toContain("Scene: Assets/Scenes/Main.unity")
+    expect(out).not.toContain("Tags:")
+  })
+})
+
+// Both regressions come from one real session (2026-09-20): renaming /Car to PlayerCar and moving
+// it under /CarGroup left the model addressing stale paths for seven calls in a row, and it then
+// added a second Rigidbody to a wheel that already had one.
+describe("paths and components after a move", () => {
+  test("a rename or a re-parent reports where the object ended up", async () => {
+    const editor = fakeEditor()
+    const renamed = await editScene(planner(editor.call), { operations: [{ op: "modify", target: "/Player", name: "PlayerCar" }] })
+    expect(renamed).toContain("'/Player' is now '/PlayerCar'. Its children moved with it.")
+
+    const moved = await editScene(planner(fakeEditor().call), { operations: [{ op: "modify", target: "/Player", parent: "/Main Camera" }] })
+    expect(moved).toContain("'/Player' is now '/Main Camera/Player'. Its children moved with it.")
+  })
+
+  // Real session: the model wrote WheelVisual.cs and added it in the next call. The file is on
+  // disk so our own check passes, but Unity only knows a MonoBehaviour once it has compiled it.
+  test("a script Unity has not compiled yet is answered with the fix, not the fault", async () => {
+    const editor = fakeEditor({
+      batch: (params: any) => ({
+        applied: 0,
+        results: (params.operations as any[]).map((o) => ({ command: o.command, success: false, error: "Could not resolve component type 'Follower'." })),
+      }),
+    })
+    const out = await editScene(planner(editor.call), { operations: [{ op: "add_component", target: "/Player", type: "Follower" }] })
+    expect(out).toContain("Follower.cs is in the project but Unity has not compiled it yet")
+    expect(out).toContain("Call unity_compile")
+  })
+
+  test("a second Rigidbody is refused here instead of in Unity's Console", async () => {
+    const editor = fakeEditor()
+    const out = await editScene(planner(editor.call), { operations: [{ op: "add_component", target: "/Player", type: "Rigidbody" }] })
+    expect(out).toContain("already has a Rigidbody and cannot have two")
+    expect(editor.applied()).toBeUndefined() // nothing was sent to Unity
+
+    // A collider is not single-instance: several on one object are legitimate, so it still goes through.
+    const collider = fakeEditor()
+    await editScene(planner(collider.call), { operations: [{ op: "add_component", target: "/Player", type: "BoxCollider" }] })
+    expect(collider.applied()?.map((o) => o.command)).toContain("add_component")
   })
 })
 
