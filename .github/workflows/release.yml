@@ -1,0 +1,61 @@
+name: Release
+
+# Push a tag `vX.Y.Z` whose version matches packages/opencode-unity/package.json.
+# A tag with a pre-release suffix (`v0.2.0-beta.1`) becomes a GitHub pre-release and the npm `next` tag.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # npm provenance
+    defaults:
+      run:
+        working-directory: packages/opencode-unity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Check that the tag matches package.json
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          case "$version" in *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;; *) echo "PRERELEASE=false" >> "$GITHUB_ENV" ;; esac
+
+      - run: bun install --frozen-lockfile
+      # prepack builds the bundles and the symbol exporter, and copies the README.
+      - run: npm pack
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" opencode-unity-*.tgz --title "$GITHUB_REF_NAME" --generate-notes $flags
+
+      - name: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          tag="latest"
+          if [ "$PRERELEASE" = "true" ]; then tag="next"; fi
+          npm publish opencode-unity-*.tgz --provenance --access public --tag "$tag"

@@ -24,3 +24,13 @@ A few things that are easy to get wrong:
 
 Bug reports are most useful with the compiler error, the hint the plugin produced (or did not),
 the Unity version, and the OS.
+
+## Releasing
+
+1. Set the new version in `packages/opencode-unity/package.json` and commit it.
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+
+The `Release` workflow runs the full CI, builds the package (`npm pack`), attaches it to a GitHub
+release and publishes it to npm with provenance. A tag with a pre-release suffix (`v0.2.0-beta.1`)
+becomes a GitHub pre-release and the npm `next` tag. The workflow needs an npm automation token in
+the repository secret `NPM_TOKEN`.
