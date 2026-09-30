@@ -4,7 +4,7 @@
 // is never asked for nested JSON here: a vector is "0, 1, 0", values are "mass=1500; useGravity=true".
 // Every tool funnels into editScene, which keeps validation, the transaction and the Undo step.
 
-import { tool, type ToolDefinition } from "@opencode-ai/plugin"
+import { arg, defineTool, optional, type ToolSpec } from "./args.ts"
 import { editScene, type PipelineCall, type SceneOp } from "./scene.ts"
 import type { SymbolGraph } from "./graph/db.ts"
 
@@ -63,7 +63,7 @@ const splitList = (text: string | undefined) => (text ?? "").split(/[,;\s]+/).ma
 
 const VECTOR = "Three numbers separated by commas, for example 0, 1.5, -3"
 
-export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> {
+export function sceneTools(deps: SceneToolDeps): Record<string, ToolSpec<any>> {
   /** Runs one operation through the shared engine, with loop protection. */
   async function run(toolName: string, args: Record<string, unknown>, context: { directory: string; sessionID: string; abort: AbortSignal }, build: () => SceneOp | string, next = ""): Promise<string> {
     const stuck = deps.stuck(context.sessionID, toolName, args)
@@ -89,20 +89,19 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> 
     return out
   }
 
-  const s = tool.schema
   return {
-    unity_object_create: tool({
+    unity_object_create: defineTool({
       description:
         'Create one object in the open Unity scene. Give it a shape to make it visible, or no shape for an empty group. To build something made of parts (a car, a house), first create an empty group, then create each part with the group as its parent. Example arguments: name "Wheel_FL", shape "cylinder", parent "/Car", position "-0.6, -0.25, 0.8", scale "0.5, 0.1, 0.5", color "black".',
       args: {
-        name: s.string().describe("Name of the new object. Must be unique under its parent"),
-        shape: s.enum(["empty", "cube", "sphere", "capsule", "cylinder", "plane", "quad"]).optional().describe("Visible shape. Leave out or use empty for a group"),
-        parent: s.string().optional().describe("Hierarchy path of the parent object, for example /Car. Leave out for the scene root"),
-        position: s.string().optional().describe(`Local position. ${VECTOR}`),
-        rotation: s.string().optional().describe("Rotation in degrees. Three numbers separated by commas, for example 0, 90, 0"),
-        scale: s.string().optional().describe("Size. Three numbers separated by commas, for example 2, 1, 2. One number scales all axes"),
-        color: s.string().optional().describe("Color name such as red, or a hex code such as #E53935. Only for objects with a shape"),
-        components: s.string().optional().describe("Component class names to add, separated by commas, for example Rigidbody, BoxCollider"),
+        name: arg.string("Name of the new object. Must be unique under its parent"),
+        shape: optional(arg.enum(["empty", "cube", "sphere", "capsule", "cylinder", "plane", "quad"], "Visible shape. Leave out or use empty for a group")),
+        parent: optional(arg.string("Hierarchy path of the parent object, for example /Car. Leave out for the scene root")),
+        position: optional(arg.string(`Local position. ${VECTOR}`)),
+        rotation: optional(arg.string("Rotation in degrees. Three numbers separated by commas, for example 0, 90, 0")),
+        scale: optional(arg.string("Size. Three numbers separated by commas, for example 2, 1, 2. One number scales all axes")),
+        color: optional(arg.string("Color name such as red, or a hex code such as #E53935. Only for objects with a shape")),
+        components: optional(arg.string("Component class names to add, separated by commas, for example Rigidbody, BoxCollider")),
       },
       execute: (args, context) =>
         run("unity_object_create", args, context, () => {
@@ -115,20 +114,20 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> 
           : "create the next object, or add behaviour with unity_component_add. After a few objects, check the result with unity_scene_view."),
     }),
 
-    unity_object_modify: tool({
+    unity_object_modify: defineTool({
       description:
         'Change one existing object in the open Unity scene: move, rotate, resize, recolor, tag, layer, show or hide, rename, or move under another parent. Only give the arguments you want to change. Example arguments: path "/Car", position "0, 2, 0", rotation "0, 90, 0".',
       args: {
-        path: s.string().describe("Hierarchy path of the object, for example /Car/Body"),
-        position: s.string().optional().describe(`New local position. ${VECTOR}`),
-        rotation: s.string().optional().describe("New rotation in degrees. Three numbers separated by commas"),
-        scale: s.string().optional().describe("New size. Three numbers separated by commas"),
-        color: s.string().optional().describe("Color name such as red, or a hex code such as #E53935"),
-        tag: s.string().optional().describe("One of the tags unity_scene_view lists, for example Player. A tag that does not exist yet cannot be used"),
-        layer: s.string().optional().describe("One of the layers unity_scene_view lists, for example Default. A layer that does not exist yet cannot be used"),
-        active: s.boolean().optional().describe("false hides the object, true shows it"),
-        new_name: s.string().optional().describe("Rename the object"),
-        new_parent: s.string().optional().describe("Hierarchy path of the new parent. Use / for the scene root"),
+        path: arg.string("Hierarchy path of the object, for example /Car/Body"),
+        position: optional(arg.string(`New local position. ${VECTOR}`)),
+        rotation: optional(arg.string("New rotation in degrees. Three numbers separated by commas")),
+        scale: optional(arg.string("New size. Three numbers separated by commas")),
+        color: optional(arg.string("Color name such as red, or a hex code such as #E53935")),
+        tag: optional(arg.string("One of the tags unity_scene_view lists, for example Player. A tag that does not exist yet cannot be used")),
+        layer: optional(arg.string("One of the layers unity_scene_view lists, for example Default. A layer that does not exist yet cannot be used")),
+        active: optional(arg.boolean("false hides the object, true shows it")),
+        new_name: optional(arg.string("Rename the object")),
+        new_parent: optional(arg.string("Hierarchy path of the new parent. Use / for the scene root")),
       },
       execute: (args, context) =>
         run("unity_object_modify", args, context, () => {
@@ -148,19 +147,19 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> 
         }),
     }),
 
-    unity_object_delete: tool({
+    unity_object_delete: defineTool({
       description: 'Delete one object, and everything inside it, from the open Unity scene. The user can undo it with Ctrl+Z. Example arguments: path "/Old".',
-      args: { path: s.string().describe("Hierarchy path of the object to delete, for example /Old") },
+      args: { path: arg.string("Hierarchy path of the object to delete, for example /Old") },
       execute: (args, context) => run("unity_object_delete", args, context, () => ({ op: "delete", target: args.path })),
     }),
 
-    unity_component_add: tool({
+    unity_component_add: defineTool({
       description:
         'Add one component to an object in the open Unity scene, optionally setting values at the same time. Your own scripts work too, after their .cs file exists and the compile report passed. Example arguments: path "/Car", component "Rigidbody", values "mass=1500; useGravity=true".',
       args: {
-        path: s.string().describe("Hierarchy path of the object, for example /Car"),
-        component: s.string().describe("Component class name, for example Rigidbody or CarController"),
-        values: s.string().optional().describe('Optional values as name=value separated by ";", for example mass=1500; useGravity=true'),
+        path: arg.string("Hierarchy path of the object, for example /Car"),
+        component: arg.string("Component class name, for example Rigidbody or CarController"),
+        values: optional(arg.string('Optional values as name=value separated by ";", for example mass=1500; useGravity=true')),
       },
       execute: (args, context) =>
         run("unity_component_add", args, context, () => {
@@ -170,13 +169,13 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> 
         }, `unity_scene_view with path "${args.path}" shows the names and current values of ${args.component}, which unity_component_set can change.`),
     }),
 
-    unity_component_set: tool({
+    unity_component_set: defineTool({
       description:
         'Set values on a component that an object already has, like typing them in the Inspector. Write the values as name=value separated by ";". A number is written 1500. A switch is true or false. A vector is 0, 3, -6. A reference to another object is its path such as /Car. A reference to an asset is its path such as Assets/Materials/Red.mat. Look at the current names and values first with unity_scene_view. Example arguments: path "/Main Camera", component "CameraFollow", values "target=/Car; offset=0, 3, -6; smooth=5".',
       args: {
-        path: s.string().describe("Hierarchy path of the object, for example /Car"),
-        component: s.string().describe("Component class name, for example Rigidbody"),
-        values: s.string().describe('Values as name=value separated by ";", for example mass=1500; useGravity=true; offset=0, 3, -6; target=/Car'),
+        path: arg.string("Hierarchy path of the object, for example /Car"),
+        component: arg.string("Component class name, for example Rigidbody"),
+        values: arg.string('Values as name=value separated by ";", for example mass=1500; useGravity=true; offset=0, 3, -6; target=/Car'),
       },
       execute: (args, context) =>
         run("unity_component_set", args, context, () => {
@@ -185,23 +184,23 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> 
         }),
     }),
 
-    unity_component_remove: tool({
+    unity_component_remove: defineTool({
       description: 'Remove one component from an object in the open Unity scene. Example arguments: path "/Car", component "BoxCollider".',
       args: {
-        path: s.string().describe("Hierarchy path of the object, for example /Car"),
-        component: s.string().describe("Component class name, for example BoxCollider"),
+        path: arg.string("Hierarchy path of the object, for example /Car"),
+        component: arg.string("Component class name, for example BoxCollider"),
       },
       execute: (args, context) => run("unity_component_remove", args, context, () => ({ op: "remove_component", target: args.path, type: args.component })),
     }),
 
-    unity_prefab_place: tool({
+    unity_prefab_place: defineTool({
       description: 'Place a copy of a prefab in the open Unity scene. Example arguments: prefab "Assets/Prefabs/Enemy.prefab", name "Enemy1", position "3, 0, 0".',
       args: {
-        prefab: s.string().describe("Asset path of the prefab, for example Assets/Prefabs/Enemy.prefab"),
-        name: s.string().optional().describe("Name for the copy. Must be unique where it is placed"),
-        parent: s.string().optional().describe("Hierarchy path of the parent object, for example /Obstacles. Leave out for the scene root"),
-        position: s.string().optional().describe(`Position. ${VECTOR}`),
-        rotation: s.string().optional().describe("Rotation in degrees. Three numbers separated by commas"),
+        prefab: arg.string("Asset path of the prefab, for example Assets/Prefabs/Enemy.prefab"),
+        name: optional(arg.string("Name for the copy. Must be unique where it is placed")),
+        parent: optional(arg.string("Hierarchy path of the parent object, for example /Obstacles. Leave out for the scene root")),
+        position: optional(arg.string(`Position. ${VECTOR}`)),
+        rotation: optional(arg.string("Rotation in degrees. Three numbers separated by commas")),
       },
       execute: (args, context) =>
         run("unity_prefab_place", args, context, () => {
@@ -210,12 +209,12 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> 
         }),
     }),
 
-    unity_prefab_create: tool({
+    unity_prefab_create: defineTool({
       description:
         'Save an object of the open Unity scene, with everything inside it, as a reusable prefab asset. Build the thing once (for example one wheel, one obstacle, one enemy), make it a prefab, then place as many copies as needed with unity_prefab_place. The object in the scene stays and becomes linked to the prefab. Example arguments: path "/Obstacle", prefab "Assets/Prefabs/Obstacle.prefab".',
       args: {
-        path: s.string().describe("Hierarchy path of the object to save as a prefab, for example /Obstacle"),
-        prefab: s.string().optional().describe("Asset path for the prefab. Leave out to use Assets/Prefabs/ plus the object name"),
+        path: arg.string("Hierarchy path of the object to save as a prefab, for example /Obstacle"),
+        prefab: optional(arg.string("Asset path for the prefab. Leave out to use Assets/Prefabs/ plus the object name")),
       },
       async execute(args, context) {
         const repeated = deps.stuck(context.sessionID, "unity_prefab_create", args)
@@ -243,7 +242,7 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolDefinition> 
       },
     }),
 
-    unity_scene_save: tool({
+    unity_scene_save: defineTool({
       description: "Save the scene that is open in the Unity Editor. Do this when the user is happy with the changes, or before running tests.",
       args: {},
       async execute(_args, context) {

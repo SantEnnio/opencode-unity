@@ -9,14 +9,19 @@
 
 ## Working on this repository
 
-- The plugin lives in `packages/opencode-unity` (TypeScript; runs on Bun in the opencode CLI and on Node in opencode desktop); the .NET
+- The plugin lives in `packages/opencode-unity` (TypeScript; one bundle for opencode 1 and 2, on Bun and on Node); the .NET
   symbol exporter in `tools/symbol-exporter`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
   commands and the pitfalls.
 - Before calling a change done: `bun test` and `bun run typecheck` in `packages/opencode-unity`.
-- `src/index.ts` must export the plugin function and nothing else.
-- No Bun-only APIs under `src/` (`Bun.*`, `bun:*` imports, `import.meta.dir`): opencode desktop
-  runs plugins on Node inside Electron, the CLI on Bun. Use `src/runtime.ts` for processes and
-  `src/sqlite.ts` for SQLite. `bun run test:node` checks the bundle on plain Node.
+- `src/index.ts` default-exports `{ id, server, setup }` and nothing else: `server` is the
+  opencode 1 plugin (`src/host-v1.ts`), `setup` the opencode 2 one (`src/host-v2.ts`). Logic goes
+  in `src/core.ts`, which knows neither API.
+- No top-level package imports under `src/`: opencode 2 gives plugins no packages.
+  `@opencode-ai/plugin` is imported inside `server` only; tool arguments go through `src/args.ts`.
+- No Bun-only APIs under `src/` (`Bun.*`, `bun:*` imports, `import.meta.dir`): opencode 1 desktop
+  runs plugins on Node inside Electron, opencode 1 CLI and opencode 2 on Bun. Use `src/runtime.ts`
+  for processes and `src/sqlite.ts` for SQLite. `bun run test:node` checks the bundle under both
+  plugin APIs, on Node and on Bun.
 - Text the model reads (tool descriptions, reports, hints, rules) targets small local models:
   short, imperative, ending with the exact next step.
 - No shell strings: spawn processes with argument arrays and build paths with `node:path`. The

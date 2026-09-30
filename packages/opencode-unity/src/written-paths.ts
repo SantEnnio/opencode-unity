@@ -7,7 +7,9 @@ export function writtenPaths(toolName: string, args: unknown, directory: string)
   if (!WRITE_TOOLS.has(toolName) || typeof args !== "object" || args === null) return []
   const record = args as Record<string, unknown>
   const paths: string[] = []
+  // opencode 1 calls the field filePath, opencode 2 path.
   if (typeof record.filePath === "string") paths.push(record.filePath)
+  else if (typeof record.path === "string") paths.push(record.path)
   if (typeof record.patchText === "string") {
     for (const match of record.patchText.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) {
       paths.push(match[1]!.trim())
