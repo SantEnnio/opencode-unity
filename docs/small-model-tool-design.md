@@ -66,3 +66,12 @@ file; "limits on adding several components" was its own broken JSON).
 13. **Every line costs.** One real session called `unity_scene_view` 32 times: three extra lines in
     that output is a hundred lines of the context the task needed. Put a hint where the question is
     asked, not everywhere it might be.
+
+## What the controlled benchmark added
+
+A later benchmark on the same model and GPU ([qwen3.6-test-report.md](qwen3.6-test-report.md))
+separated the two changes this table mixes. On the flat surface, better error messages alone took
+the rename-and-re-parent task from 21 rejections to 0. Shape and messages are both levers, and
+messages are the cheaper one. Two more knobs cost nothing: temperature 0.3 and thinking off took
+the hard cases from 89% to 100%. Always read the rejection rate next to the completion rate: a model
+that gives up early has few rejections.
