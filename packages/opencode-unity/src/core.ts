@@ -23,9 +23,13 @@ import { AGENT_PROMPT, projectFacts, renderRules } from "./rules.ts"
 import { renderStatus, startupLine } from "./status.ts"
 import { run as runProcess } from "./runtime.ts"
 import { editScene, type PipelineCall, viewScene } from "./scene.ts"
-import { sceneTools } from "./scene-tools.ts"
+import { sceneTools, touchedPaths } from "./scene-tools.ts"
+import { installProbe, PROBE_VERSION, probeState, rememberObjects } from "./probe/package.ts"
+import { parseKeys } from "./probe/keys.ts"
+import { objectTimeline, playNote, probeDir, readRun, runReport } from "./probe/report.ts"
 import { commandResult, editorCommand, editorConnected, editorHasProjectOpen, findUnityCli } from "./unity/cli.ts"
 import { cacheDir, findEditor, findEditorExecutable, loadProject, type UnityProject } from "./unity/discovery.ts"
+import { PORT_TAKEN, pipelineState, readDescriptor } from "./unity/pipeline.ts"
 import { runTests } from "./unity/tests.ts"
 import { writtenPaths } from "./written-paths.ts"
 
@@ -42,9 +46,25 @@ type SessionState = {
   /** Who the user last spoke to, so the idle gate answers as the same agent (opencode 1) */
   agent?: string
   model?: { providerID: string; modelID: string }
+  /** The last play the model was told about, and for how many more user turns */
+  seenRun?: string
+  note?: string
+  noteTurns?: number
+  /** The user message the play note goes with */
+  noteMessage?: string
 }
 
+// A play note is only about a game the user has just played.
+const NOTE_MAX_AGE_MS = 30 * 60_000
+const NOTE_TURNS = 2
+
 export type Log = (level: "info" | "warn" | "error", message: string) => void
+
+/** What the core asks of the host. */
+export type Host = {
+  /** Registers the tools again, after the set changed (opencode 2 can, opencode 1 cannot) */
+  reloadTools?: () => void | Promise<void>
+}
 
 export const UNITY_COMMAND = {
   name: "unity",
@@ -157,12 +177,12 @@ function operationZodShape(z: any): Record<string, any> {
 }
 
 /** Null outside a Unity project: installed globally, the plugin must stay out of the way elsewhere. */
-export function createUnity(directory: string, rawOptions: unknown, log: Log) {
+export function createUnity(directory: string, rawOptions: unknown, log: Log, host: Host = {}) {
   const startupProject = discoverProject(directory)
-  return startupProject ? createUnityCore(directory, startupProject, rawOptions, log) : null
+  return startupProject ? createUnityCore(directory, startupProject, rawOptions, log, host) : null
 }
 
-function createUnityCore(directory: string, startupProject: UnityProject, rawOptions: unknown, log: Log) {
+function createUnityCore(directory: string, startupProject: UnityProject, rawOptions: unknown, log: Log, host: Host) {
   const options = loadOptions(directory, rawOptions)
   const projectAt = (dir: string) => loadProject(dir) ?? startupProject
 
@@ -288,6 +308,17 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
   const NO_EDITOR =
     "[unity] This works through the open Unity Editor, and no Editor with the Pipeline package is connected for this project. Call unity_status to see what is missing. If the package is not installed, ask the user whether to install it, then call unity_pipeline_install. If it is installed, ask the user to open the project in Unity. Do NOT write an Editor script to build the scene instead, and do not edit the .unity file."
 
+  /** Why the Editor cannot be used: usually not open or no Pipeline package, sometimes another Editor on its port. */
+  async function noEditor(dir: string): Promise<string> {
+    const root = projectAt(dir).root
+    if ((await pipelineState(root)) === "port-taken") {
+      // A small model stops at "does not work" unless it is told what still does.
+      const play = probeState(root) === "current" ? ", and running the game with unity_play new_run true (it does not need that port)" : ""
+      return `[unity] ${PORT_TAKEN(readDescriptor(root)?.port ?? 0)}. Still working: reading and editing scripts${play}. Tell the user about the other Unity project in one sentence, then carry on with what still works. Do NOT write an Editor script to work around it, and do not edit the .unity file.`
+    }
+    return NO_EDITOR
+  }
+
   const PIPELINE_WAIT_MS = 120_000
 
   // A small model that gets an error sometimes resends the identical call, forever. Repeating a
@@ -373,9 +404,27 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
     }
   }
 
-  /** A new user message: the idle gate gets a fresh budget, and remembers who to answer as. */
-  function userMessage(sessionID: string, who: { agent?: string; model?: { providerID: string; modelID: string } } = {}) {
-    Object.assign(session(sessionID), { nudges: 0, ...who })
+  /**
+   * A new user message: the idle gate gets a fresh budget, and remembers who to answer as. If the
+   * user has just played, the play note goes with this message and the next one, then is dropped.
+   */
+  function userMessage(sessionID: string, who: { agent?: string; model?: { providerID: string; modelID: string } } = {}, messageID?: string) {
+    const state = session(sessionID)
+    Object.assign(state, { nudges: 0, ...who })
+    const run = probeState(startupProject.root) === "missing" ? null : readRun(startupProject.root)
+    // A test play started by unity_play was already returned to the model as the tool's result.
+    const fresh = run !== null && run.startedBy !== "agent" && run.id !== state.seenRun && Date.now() - Date.parse(run.endedAt) < NOTE_MAX_AGE_MS
+    if (fresh) Object.assign(state, { seenRun: run.id, note: playNote(run), noteTurns: NOTE_TURNS, noteMessage: messageID })
+    else if (state.noteTurns) state.noteTurns--
+  }
+
+  /**
+   * The play note for this session's next model request, and the user message it goes with. The
+   * host adds it to that one request only: it is never stored, so it never piles up in the context.
+   */
+  function playNoteFor(sessionID: string): { text: string; messageID?: string } | null {
+    const state = sessions.get(sessionID)
+    return state?.note && state.noteTurns ? { text: state.note, messageID: state.noteMessage } : null
   }
 
   /** The session stopped. Returns the message that sends the model back while the build is red, or null. */
@@ -530,7 +579,7 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
       args: { path: optional(arg.string('Hierarchy path of one object, e.g. "/Player/Gun". Omit for the whole scene.')) },
       async execute(args, context) {
         const project = projectAt(context.directory)
-        if (!(await editorConnected(project.root, { signal: context.abort }))) return NO_EDITOR
+        if (!(await editorConnected(project.root, { signal: context.abort }))) return noEditor(context.directory)
         return viewScene(pipeline(project, context.abort), args.path, { flatTools: sceneMode !== "batch" })
       },
     }),
@@ -556,7 +605,7 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
         "The primitive shapes are cube, sphere, capsule, cylinder, plane and quad. Leave primitive out for an empty object.",
         "A color is a hex string or three numbers from 0 to 1. It creates a material and assigns it.",
         "Values are plain JSON. Write 1500, true, [0,3,-6]. Never wrap a value in an object.",
-        "A value that points to another object is its hierarchy path. A value that points to an asset is its path starting with Assets/.",
+        "A value that points to an object or to one of its components is the hierarchy path of that object, also when it is the object being changed. A value that points to an asset is its path starting with Assets/.",
         "For a thing made of parts, create an empty parent first and put the scaled shapes inside it as children.",
         "Your own scripts can be added as components only after their .cs file exists and the compile report passed.",
         "Send a few operations per call, not the whole scene at once.",
@@ -573,8 +622,9 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
         const repeated = stuck(context.sessionID, "unity_scene_edit", args)
         if (repeated) return repeated
         const editor = await connectScene(context.directory, context.abort)
-        if (!editor) return NO_EDITOR
+        if (!editor) return noEditor(context.directory)
         const output = await editScene(editor, { operations: args.operations, save: args.save })
+        if (!output.includes("NOT changed")) rememberObjects(projectAt(context.directory).root, args.operations.flatMap((op) => touchedPaths(op)))
         return breakLoop(context.sessionID, "unity_scene_edit", args, output, output.includes("NOT changed"))
       },
     }),
@@ -601,7 +651,7 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
       async execute(args, context) {
         const project = projectAt(context.directory)
         if (!(await editorConnected(project.root, { signal: context.abort }))) {
-          return `${NO_EDITOR} Meanwhile, ask the user to paste the Console output.`
+          return `${await noEditor(context.directory)} Meanwhile, ask the user to paste the Console output.`
         }
         const response = await editorCommand(project.root, "console", { level: args.level ?? "error", tail: args.count ?? 15 }, { signal: context.abort })
         if (!response.success) return `[unity] Console could not be read: ${response.errors[0]?.message ?? "unknown error"}`
@@ -619,7 +669,117 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
   }
 
   if (sceneMode === "simple") delete tools.unity_scene_edit
-  if (sceneMode !== "batch") Object.assign(tools, sceneTools({ connect: connectScene, notConnected: NO_EDITOR, breakLoop, stuck }))
+  if (sceneMode !== "batch") {
+    Object.assign(tools, sceneTools({ connect: connectScene, notConnected: noEditor, breakLoop, stuck, touched: (dir, paths) => rememberObjects(projectAt(dir).root, paths) }))
+  }
+
+  // The runtime probe's tools cost context, so each one exists only while it is useful.
+  const probeTools = {
+    unity_probe_install: defineTool({
+      description:
+        "Add the opencode-unity runtime probe to this Unity project. It records what the game does in Play mode (errors, how objects move, collisions, keys) so you can see it with unity_play. Editor only, nothing goes into builds. Call it when the user agrees.",
+      args: {},
+      async execute(_args, context) {
+        const project = projectAt(context.directory)
+        const state = probeState(project.root)
+        if (state === "current") return `[unity] The runtime probe ${PROBE_VERSION} is already installed. Use unity_play.`
+        const refused = await context.consent({
+          permission: "unity_probe_install",
+          question: `${state === "outdated" ? "Update" : "Add"} the opencode-unity runtime probe in ${project.root}/Packages? It is Editor only and records what the game does in Play mode.`,
+          patterns: [project.root],
+          metadata: { package: "com.opencode-unity.probe", project: project.root },
+        })
+        if (refused) return refused
+        installProbe(project.root)
+        await host.reloadTools?.()
+        return `[unity] Runtime probe ${PROBE_VERSION} added to Packages/. Unity imports it when its window gets focus. From now on every Play is recorded: ask the user to press Play, try the game and press Stop${host.reloadTools ? ", then call unity_play." : ". Restart opencode to get the unity_play tool."}`
+      },
+    }),
+
+    unity_play: defineTool({
+      description:
+        'What the game does in the Unity Editor, recorded by the runtime probe: errors, how the main objects moved, collisions, keys and input actions. Without arguments: the last play. With a path: that object\'s timeline in the last play. With new_run true: runs the game now for 5 seconds with nobody pressing keys, then reports it. With keys: runs the game now and presses those keys, for example keys "W 2s; Space" to test moving and jumping. Then check with path whether the player moved.',
+      args: {
+        path: optional(arg.string('Hierarchy path of one object, e.g. "/Player". Omit for the whole run.')),
+        new_run: optional(arg.boolean("true to run the game now instead of reading the last play")),
+        keys: optional(arg.string('Keys to press in a new run, in order, e.g. "W 2s; Space; W+D 1s; wait 1s". A time after the keys holds them; without it, a quick tap')),
+      },
+      async execute(args, context) {
+        const project = projectAt(context.directory)
+        if (args.new_run === true || args.keys?.trim()) {
+          const failed = await testPlay(project, context.sessionID, context.abort, args.keys?.trim() || undefined)
+          if (failed) return failed
+        }
+        const run = readRun(project.root)
+        if (!run) return "[unity] No play recorded yet. Call unity_play with new_run true, or ask the user to press Play in Unity, try the game, then press Stop."
+        return args.path?.trim() ? objectTimeline(run, args.path) : runReport(run)
+      },
+    }),
+  }
+
+  const TEST_PLAY_SECONDS = 5
+  // Entering Play reloads scripts (about 7 s measured), compiling can come first, then the run itself.
+  const TEST_PLAY_WAIT_MS = 120_000
+
+  /**
+   * Asks the probe for a test play and waits for its recording. Returns why it could not run, or
+   * null once last-run.json answers this request. The probe starts and stops Play itself, so this
+   * works without the Pipeline package; with it, the Editor is also told to play right away.
+   */
+  async function testPlay(project: UnityProject, sessionID: string, signal: AbortSignal, keys?: string): Promise<string | null> {
+    if (probeState(project.root) !== "current") return "[unity] The runtime probe in this project is out of date and cannot start a test play. Call unity_probe_install to update it."
+    const script = keys ? parseKeys(keys) : null
+    if (typeof script === "string") return `[unity] Game NOT run: ${script}`
+    if (script && projectFacts(project).inputHandler === 0) {
+      return "[unity] Game NOT run: this project reads the keyboard through the old Input Manager (UnityEngine.Input), and keys cannot be pressed for it. Call unity_play with new_run true to run it without keys, and ask the user to test the controls."
+    }
+    if (!editorHasProjectOpen(project.root)) return "[unity] Unity is not open with this project, so the game cannot run. Ask the user to open the project in Unity, then call unity_play with new_run true again."
+    if (sessions.get(sessionID)?.failing) return "[unity] The project does not compile, so the game cannot run. Fix the compile errors first (unity_compile), then call unity_play with new_run true again."
+
+    const connected = await editorConnected(project.root, { signal })
+    if (connected) {
+      const status = await editorCommand(project.root, "editor_status", {}, { signal, timeoutMs: 15_000 })
+      const playMode = (status.data as { result?: { playMode?: string } } | null)?.result?.playMode
+      if (playMode === "playing") return "[unity] The game is already playing in Unity: the user is probably testing it. Wait until they press Stop, then call unity_play without arguments to read that play."
+    }
+
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const request = path.join(probeDir(project.root), "request.json")
+    fs.mkdirSync(path.dirname(request), { recursive: true })
+    // Keys start 0.5 s in; the game keeps running 1.5 s after the last one to show what it caused.
+    const seconds = script ? Math.min(30, Math.max(TEST_PLAY_SECONDS, Math.ceil(0.5 + script.total + 1.5))) : TEST_PLAY_SECONDS
+    fs.writeFileSync(request, JSON.stringify({ id, seconds, ...(script && { steps: script.steps, script: script.text }) }))
+    if (connected) void editorCommand(project.root, "editor_play", {}, { signal, timeoutMs: 60_000 }).catch(() => {})
+
+    const deadline = Date.now() + TEST_PLAY_WAIT_MS
+    const refusal = path.join(probeDir(project.root), "refused.json")
+    while (Date.now() < deadline && !signal.aborted) {
+      if (readRun(project.root)?.requestId === id) return null
+      try {
+        const refused = JSON.parse(fs.readFileSync(refusal, "utf8")) as { id?: string; reason?: string }
+        if (refused.id === id) {
+          return refused.reason === "compile"
+            ? "[unity] Game NOT run: Unity says the scripts do not compile, and it refuses to play. Call unity_compile, fix the errors, then call unity_play again."
+            : "[unity] The user is playing the game in Unity right now. Wait until they press Stop, then call unity_play without arguments to read that play."
+        }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    fs.rmSync(request, { force: true })
+    return signal.aborted
+      ? "[unity] Test play cancelled."
+      : "[unity] Unity did not run the game within two minutes. It is probably in the background and busy, or showing a dialog. Ask the user to click on the Unity window, then call unity_play with new_run true again."
+  }
+
+  /** The tools to register now: the probe ones depend on whether the probe is in the project. */
+  function activeTools(): Record<string, ToolSpec<any>> {
+    const state = probeState(startupProject.root)
+    return {
+      ...tools,
+      ...(state !== "current" && { unity_probe_install: probeTools.unity_probe_install }),
+      ...(state !== "missing" && { unity_play: probeTools.unity_play }),
+    }
+  }
 
   const allowedMethods = options.executeMethods ?? []
   if (allowedMethods.length > 0) {
@@ -649,10 +809,13 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
   return {
     project: startupProject,
     options,
-    tools,
+    get tools() {
+      return activeTools()
+    },
     guardWrite,
     afterWrite,
     userMessage,
+    playNote: playNoteFor,
     idle,
     forget: (sessionID: string) => sessions.delete(sessionID),
     /** The always-on rules block for the system prompt, or null when switched off. */

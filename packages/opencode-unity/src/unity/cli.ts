@@ -6,7 +6,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { run, type RunOptions, runSync, which } from "../runtime.ts"
-import { pipelineConnected, pipelineExec } from "./pipeline.ts"
+import { pipelineExec, pipelineState } from "./pipeline.ts"
 
 export type CliJson = { success: boolean; data: unknown; errors: { code: string; message: string }[] }
 export type { RunOptions }
@@ -44,8 +44,8 @@ async function cliJson(cli: string, args: string[], options: RunOptions): Promis
 }
 
 /** True when an Editor with the Pipeline package has this project open and its server is up. */
-export async function editorConnected(projectRoot: string, _options: RunOptions = {}): Promise<boolean> {
-  return pipelineConnected(projectRoot)
+export async function editorConnected(projectRoot: string, options: RunOptions = {}): Promise<boolean> {
+  return (await pipelineState(projectRoot, options.signal)) === "connected"
 }
 
 /** Runs a Pipeline command inside the open Editor. */

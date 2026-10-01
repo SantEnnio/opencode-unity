@@ -55,7 +55,7 @@ describe("flat scene tools", () => {
   const failures = new Map<string, number>()
   const tools = sceneTools({
     connect: async () => ({ call, graph: null, scripts: new Set(["CarController"]), assetExists: (asset) => asset === "Assets/Prefabs/Cone.prefab", readAsset: () => null }),
-    notConnected: "NOT CONNECTED",
+    notConnected: async () => "NOT CONNECTED",
     breakLoop: (_s, name, _i, output, failed) => (failures.set(name, failed ? (failures.get(name) ?? 0) + 1 : 0), output),
     stuck: () => null,
   })

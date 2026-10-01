@@ -2,9 +2,11 @@
 // Maintenance commands for things too heavy to start from inside a chat session.
 //   opencode-unity docs install [unityVersion|projectPath] [--keep-zip]
 //   opencode-unity docs status  [unityVersion|projectPath]
+//   opencode-unity probe <install|uninstall|status> [projectPath]
 
 import { docsDbPath, docsInstalled, docsUrl, docsStream, installDocs } from "./docs/install.ts"
 import { docsMeta } from "./docs/store.ts"
+import { installedProbe, installProbe, PROBE_VERSION, uninstallProbe } from "./probe/package.ts"
 import { loadProject } from "./unity/discovery.ts"
 
 function resolveVersion(arg: string | undefined): string {
@@ -33,7 +35,25 @@ async function main(argv: string[]): Promise<number> {
     return 0
   }
 
-  console.error("usage: opencode-unity docs <install|status> [unityVersion|projectPath] [--keep-zip]")
+  if (area === "probe") {
+    const project = loadProject(positional ?? process.cwd())
+    if (!project) throw new Error("pass a Unity project path, or run this inside a Unity project")
+    if (action === "install") {
+      console.log(`Runtime probe ${PROBE_VERSION} copied to ${installProbe(project.root)}. Unity imports it when its window gets focus.`)
+      return 0
+    }
+    if (action === "uninstall") {
+      console.log(uninstallProbe(project.root) ? "Runtime probe removed." : "The runtime probe was not installed.")
+      return 0
+    }
+    if (action === "status") {
+      const version = installedProbe(project.root)
+      console.log(version ? `installed: ${version} (plugin ships ${PROBE_VERSION})` : "not installed")
+      return 0
+    }
+  }
+
+  console.error("usage: opencode-unity docs <install|status> [unityVersion|projectPath] [--keep-zip]\n       opencode-unity probe <install|uninstall|status> [projectPath]")
   return 2
 }
 

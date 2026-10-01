@@ -17,11 +17,31 @@ export type SceneToolDeps = {
     assetExists(asset: string): boolean
     readAsset(asset: string): string | null
   } | null>
-  notConnected: string
+  /** What to answer when no Editor can be used for the session's project */
+  notConnected(directory: string): Promise<string>
   /** Escalates when the same failing call is repeated */
   breakLoop(sessionID: string, toolName: string, input: unknown, output: string, failed: boolean): string
   /** Set when an identical call already failed twice: answer without executing again */
   stuck(sessionID: string, toolName: string, input: unknown): string | null
+  /** Objects a successful call created or changed, for the runtime probe to record first */
+  touched?(directory: string, paths: string[]): void
+}
+
+const joinPath = (parent: string | undefined, name: string) => `${(parent ?? "").replace(/\/+$/, "")}/${name}`.replace(/^\/*/, "/")
+
+/** The hierarchy paths an operation leaves behind: the object itself, under its new name or parent. */
+export function touchedPaths(op: Partial<SceneOp> & Record<string, unknown>): string[] {
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined)
+  const name = text(op.name)
+  const target = text(op.target)
+  if ((op.op === "create" || op.op === "instantiate") && name) return [joinPath(text(op.parent), name)]
+  if (!target) return []
+  if (op.op === "delete") return []
+  if (op.op === "modify" && (name || op.parent !== undefined)) {
+    const parent = op.parent !== undefined ? text(op.parent) : target.slice(0, target.lastIndexOf("/"))
+    return [joinPath(parent, name ?? target.slice(target.lastIndexOf("/") + 1))]
+  }
+  return [target]
 }
 
 /** "0, 1, 0", "0 1 0", "(0,1,0)", "[0, 1, 0]", "x=0 y=1 z=0" -> [0, 1, 0]. Returns a message when it is not a vector. */
@@ -72,9 +92,10 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolSpec<any>> {
     if (typeof op === "string") return deps.breakLoop(context.sessionID, toolName, args, `[unity] Scene NOT changed: ${op}`, true)
 
     const editor = await deps.connect(context.directory, context.abort)
-    if (!editor) return deps.notConnected
+    if (!editor) return deps.notConnected(context.directory)
     const output = await editScene(editor, { operations: [op] })
     const failed = output.includes("NOT changed")
+    if (!failed) deps.touched?.(context.directory, touchedPaths(op))
     // A small model follows an explicit pointer far better than it plans the next step itself.
     return deps.breakLoop(context.sessionID, toolName, args, failed || !next ? output : `${output}\n→ Next: ${next}`, failed)
   }
@@ -171,7 +192,7 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolSpec<any>> {
 
     unity_component_set: defineTool({
       description:
-        'Set values on a component that an object already has, like typing them in the Inspector. Write the values as name=value separated by ";". A number is written 1500. A switch is true or false. A vector is 0, 3, -6. A reference to another object is its path such as /Car. A reference to an asset is its path such as Assets/Materials/Red.mat. Look at the current names and values first with unity_scene_view. Example arguments: path "/Main Camera", component "CameraFollow", values "target=/Car; offset=0, 3, -6; smooth=5".',
+        'Set values on a component that an object already has, like typing them in the Inspector. Write the values as name=value separated by ";". A number is written 1500. A switch is true or false. A vector is 0, 3, -6. A reference to an object or to one of its components is the path of that object such as /Car, also when it is the object being changed. A reference to an asset is its path such as Assets/Materials/Red.mat. Look at the current names and values first with unity_scene_view. Example arguments: path "/Main Camera", component "CameraFollow", values "target=/Car; offset=0, 3, -6; smooth=5".',
       args: {
         path: arg.string("Hierarchy path of the object, for example /Car"),
         component: arg.string("Component class name, for example Rigidbody"),
@@ -220,7 +241,7 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolSpec<any>> {
         const repeated = deps.stuck(context.sessionID, "unity_prefab_create", args)
         if (repeated) return repeated
         const editor = await deps.connect(context.directory, context.abort)
-        if (!editor) return deps.notConnected
+        if (!editor) return deps.notConnected(context.directory)
         const done = (output: string, failed: boolean) => deps.breakLoop(context.sessionID, "unity_prefab_create", args, output, failed)
 
         const source = `/${args.path.trim().replace(/^\/+|\/+$/g, "")}`
@@ -247,7 +268,7 @@ export function sceneTools(deps: SceneToolDeps): Record<string, ToolSpec<any>> {
       args: {},
       async execute(_args, context) {
         const editor = await deps.connect(context.directory, context.abort)
-        if (!editor) return deps.notConnected
+        if (!editor) return deps.notConnected(context.directory)
         const saved = await editor.call("save_scene")
         return saved.ok ? "[unity] Scene saved." : `[unity] The scene could not be saved: ${saved.error}. If it has never been saved, ask the user to save it once in the Editor with File > Save As.`
       },

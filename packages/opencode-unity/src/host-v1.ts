@@ -54,8 +54,18 @@ export async function server({ client, directory }: PluginInput, rawOptions?: un
       if (report) output.output = `${output.output}\n\n${report}`
     },
 
-    "chat.message": async (input) => {
-      unity.userMessage(input.sessionID, { agent: input.agent, model: input.model })
+    "chat.message": async (input, output) => {
+      unity.userMessage(input.sessionID, { agent: input.agent, model: input.model }, output.message.id)
+    },
+
+    // The play note joins the request only, never the stored session: see docs/runtime-module.md.
+    "experimental.chat.messages.transform": async (_input, output) => {
+      const sessionID = output.messages.at(-1)?.info.sessionID
+      const note = sessionID ? unity.playNote(sessionID) : null
+      if (!note) return
+      const target = output.messages.find((m) => m.info.id === note.messageID) ?? output.messages.findLast((m) => m.info.role === "user")
+      if (!target) return
+      target.parts.push({ id: "prt_opencode_unity_play", sessionID: target.info.sessionID, messageID: target.info.id, type: "text", text: note.text, synthetic: true })
     },
 
     event: async ({ event }) => {

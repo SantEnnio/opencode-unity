@@ -38,6 +38,42 @@ export function readDescriptor(projectRoot: string): Descriptor | null {
 
 export const pipelineConnected = (projectRoot: string) => readDescriptor(projectRoot) !== null
 
+// Seen live: with two Unity projects open, the second Editor finds the Pipeline port taken, but
+// its descriptor still names that port. Requests then reach the other Editor, which answers 401.
+export const PORT_TAKEN = (port: number) =>
+  `A different Unity project, open in a second Unity Editor, holds the Pipeline port (${port}) that this project's Editor needs. Until the user closes that other project and restarts this one, the scene tools, the Console and Editor tests do not work here`
+
+const checked = new Map<string, { at: number; ok: boolean }>()
+const CHECK_TTL_MS = 15_000
+
+/**
+ * "connected" when this project's Editor answers, "port-taken" when another Editor answers in
+ * its place, "none" when no Editor with the Pipeline package runs for it. A server that does not
+ * answer at all (a domain reload) counts as connected: requests retry through it.
+ */
+export async function pipelineState(projectRoot: string, signal?: AbortSignal): Promise<"connected" | "port-taken" | "none"> {
+  const descriptor = readDescriptor(projectRoot)
+  if (!descriptor) return "none"
+  const key = `${descriptor.pid}:${descriptor.port}:${descriptor.evalToken}`
+  const cached = checked.get(key)
+  if (cached && Date.now() - cached.at < CHECK_TTL_MS) return cached.ok ? "connected" : "port-taken"
+  let ok = true
+  try {
+    const timeout = AbortSignal.timeout(3_000)
+    const response = await fetch(`http://127.0.0.1:${descriptor.port}/api/exec`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${descriptor.evalToken}` },
+      body: JSON.stringify({ command: "editor_status", parameters: {} }),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    })
+    ok = response.status !== 401
+  } catch {
+    ok = true
+  }
+  checked.set(key, { at: Date.now(), ok })
+  return ok ? "connected" : "port-taken"
+}
+
 export async function pipelineExec(
   projectRoot: string,
   command: string,
@@ -77,6 +113,7 @@ export async function pipelineExec(
       return failure("BAD_RESPONSE", `HTTP ${response.status}: ${text.slice(0, 300)}`)
     }
 
+    if (response.status === 401) return failure("PORT_TAKEN", PORT_TAKEN(descriptor.port))
     // 503 = the Editor is importing or compiling: documented as retryable.
     if (response.status === 503 && attempt < BUSY_RETRIES) {
       await new Promise((resolve) => setTimeout(resolve, BUSY_DELAY_MS))

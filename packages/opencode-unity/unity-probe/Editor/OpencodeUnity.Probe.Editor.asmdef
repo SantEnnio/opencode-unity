@@ -1,0 +1,16 @@
+{
+  "name": "OpencodeUnity.Probe.Editor",
+  "rootNamespace": "OpencodeUnity.Probe",
+  "references": ["Unity.InputSystem"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [
+    { "name": "com.unity.inputsystem", "expression": "1.0.0", "define": "OPENCODE_PROBE_INPUT" }
+  ],
+  "noEngineReferences": false
+}

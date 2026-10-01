@@ -18,6 +18,7 @@ if (process.argv.includes("--uninstall")) {
   fs.rmSync(pluginFile, { force: true })
   fs.rmSync(path.join(assetsDir, "symbol-exporter"), { recursive: true, force: true })
   fs.rmSync(path.join(assetsDir, "cli.js"), { force: true })
+  fs.rmSync(path.join(assetsDir, "unity-probe"), { recursive: true, force: true })
   console.log(`Removed opencode-unity from ${target} (config.json and caches were left in place).`)
   process.exit(0)
 }
@@ -36,6 +37,8 @@ await bundle("src/index.ts", pluginFile)
 await bundle("src/cli.ts", path.join(assetsDir, "cli.js"))
 fs.rmSync(path.join(assetsDir, "symbol-exporter"), { recursive: true, force: true })
 fs.cpSync(exporter, path.join(assetsDir, "symbol-exporter"), { recursive: true })
+fs.rmSync(path.join(assetsDir, "unity-probe"), { recursive: true, force: true })
+fs.cpSync(path.join(packageRoot, "unity-probe"), path.join(assetsDir, "unity-probe"), { recursive: true })
 
 const version = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8")).version
 fs.writeFileSync(path.join(assetsDir, "VERSION"), `${version}\n`)

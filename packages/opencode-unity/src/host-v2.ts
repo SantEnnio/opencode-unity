@@ -11,12 +11,14 @@ import { cacheDir } from "./unity/discovery.ts"
 type Content = string | ReadonlyArray<{ type: string; text?: string }>
 type ToolResult = { content?: Content; output?: unknown; metadata?: Record<string, unknown> }
 type Registration = { dispose(): Promise<void> }
+type V2Message = { id?: string; role: string; content: ReadonlyArray<unknown> }
 
 type V2Context = {
   location: { directory: string }
   options: Record<string, unknown>
   tool: {
     transform(callback: (tools: { add(tool: Record<string, unknown>): void }) => void): Promise<Registration>
+    reload(): Promise<void>
     hook(name: "execute.before", callback: (event: { tool: string; sessionID: string; input: unknown }) => void | Promise<void>): Promise<Registration>
     hook(
       name: "execute.after",
@@ -24,8 +26,11 @@ type V2Context = {
     ): Promise<Registration>
   }
   session: {
-    hook(name: "prompt", callback: (event: { sessionID: string; metadata?: Record<string, unknown> }) => void | Promise<void>): Promise<Registration>
-    hook(name: "context", callback: (event: { agent: string; system: { type: "text"; text: string }[] }) => void | Promise<void>): Promise<Registration>
+    hook(name: "prompt", callback: (event: { sessionID: string; messageID: string; metadata?: Record<string, unknown> }) => void | Promise<void>): Promise<Registration>
+    hook(
+      name: "context",
+      callback: (event: { sessionID: string; agent: string; system: { type: "text"; text: string }[]; messages: V2Message[] }) => void | Promise<void>,
+    ): Promise<Registration>
     prompt(input: { sessionID: string; text: string; delivery?: unknown }): Promise<unknown>
     synthetic(input: { sessionID: string; text: string; description?: string; metadata?: Record<string, unknown> }): Promise<unknown>
   }
@@ -63,7 +68,7 @@ export async function setup(ctx: V2Context) {
   }
 
   const directory = ctx.location.directory
-  const unity = createUnity(directory, ctx.options, log)
+  const unity = createUnity(directory, ctx.options, log, { reloadTools: () => ctx.tool.reload() })
   if (!unity) return
 
   const lastUserMessage = new Map<string, number>()
@@ -143,12 +148,29 @@ export async function setup(ctx: V2Context) {
     await ctx.session.hook("prompt", (event) => {
       if (event.metadata?.[OWN]) return
       lastUserMessage.set(event.sessionID, Date.now())
-      unity.userMessage(event.sessionID)
+      unity.userMessage(event.sessionID, {}, event.messageID)
     }),
   )
 
+  // Changes here reach one model request only; opencode 2 never stores them in the session.
   const rules = unity.rules()
-  if (rules) disposables.push(await ctx.session.hook("context", (event) => void event.system.push({ type: "text", text: rules })))
+  disposables.push(
+    await ctx.session.hook("context", (event) => {
+      if (rules) event.system.push({ type: "text", text: rules })
+      // The play note goes at the end, on the user's message: text that changes near the top of a
+      // request makes a local server reprocess the whole context instead of reusing its cache.
+      const note = unity.playNote(event.sessionID)
+      if (!note) return
+      let index = event.messages.findIndex((m) => note.messageID !== undefined && m.id === note.messageID)
+      if (index < 0) index = event.messages.findLastIndex((m) => m.role === "user")
+      const message = event.messages[index]
+      if (!message) return
+      // Same prototype, so opencode still sees its own message class.
+      event.messages[index] = Object.assign(Object.create(Object.getPrototypeOf(message)), message, {
+        content: [...message.content, { type: "text", text: note.text }],
+      })
+    }),
+  )
 
   disposables.push(
     await ctx.command.transform((editor) =>

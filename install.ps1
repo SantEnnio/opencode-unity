@@ -38,7 +38,7 @@ $AssetsDir = Join-Path $ConfigDir "opencode-unity"
 
 if ($Uninstall) {
   Remove-Item -Force -ErrorAction SilentlyContinue $PluginFile
-  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $AssetsDir "symbol-exporter"), (Join-Path $AssetsDir "cli.js"), (Join-Path $AssetsDir "VERSION")
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $AssetsDir "symbol-exporter"), (Join-Path $AssetsDir "unity-probe"), (Join-Path $AssetsDir "cli.js"), (Join-Path $AssetsDir "VERSION")
   Write-Host "opencode-unity removed from $ConfigDir (config.json and caches were left in place)."
   return
 }
@@ -65,7 +65,7 @@ try {
   & tar -xzf $Tarball -C $Work
   if ($LASTEXITCODE -ne 0) { throw "Could not unpack $Tarball (tar exit code $LASTEXITCODE)." }
   $Unpacked = Join-Path $Work "package"
-  foreach ($Needed in @("dist\index.js", "dist\cli.js", "bin\symbol-exporter\symbol-exporter.dll", "package.json")) {
+  foreach ($Needed in @("dist\index.js", "dist\cli.js", "bin\symbol-exporter\symbol-exporter.dll", "unity-probe\package.json", "package.json")) {
     if (-not (Test-Path (Join-Path $Unpacked $Needed))) { throw "The package is incomplete: $Needed is missing." }
   }
 
@@ -75,6 +75,9 @@ try {
   $Exporter = Join-Path $AssetsDir "symbol-exporter"
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Exporter
   Copy-Item -Recurse -Force (Join-Path $Unpacked "bin\symbol-exporter") $Exporter
+  $Probe = Join-Path $AssetsDir "unity-probe"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Probe
+  Copy-Item -Recurse -Force (Join-Path $Unpacked "unity-probe") $Probe
   $Installed = (Get-Content -Raw (Join-Path $Unpacked "package.json") | ConvertFrom-Json).version
   Set-Content -Path (Join-Path $AssetsDir "VERSION") -Value $Installed -Encoding Ascii
 } finally {

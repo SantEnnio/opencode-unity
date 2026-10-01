@@ -7,11 +7,14 @@ import pkg from "../package.json" with { type: "json" }
 import { listProjectFiles } from "./compile/reconcile.ts"
 import { docsDbPath, docsInstalled, docsInstalling, docsStream } from "./docs/install.ts"
 import { docsMeta } from "./docs/store.ts"
+import { installedProbe, PROBE_VERSION, probeState } from "./probe/package.ts"
+import { readRun } from "./probe/report.ts"
 import type { UnityPluginOptions } from "./options.ts"
 import { projectFacts } from "./rules.ts"
 import { which } from "./runtime.ts"
 import { editorConnected, editorHasProjectOpen, findUnityCli } from "./unity/cli.ts"
 import { cacheDir, findEditor, type UnityProject } from "./unity/discovery.ts"
+import { PORT_TAKEN, pipelineState, readDescriptor } from "./unity/pipeline.ts"
 
 export const VERSION: string = pkg.version
 
@@ -49,13 +52,25 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
   } catch {
     // no manifest: treat as not installed
   }
+  const portTaken = !connected && (await pipelineState(project.root, signal)) === "port-taken"
   const pipeline = connected
     ? "connected"
+    : portTaken
+      ? `NOT USABLE. ${PORT_TAKEN(readDescriptor(project.root)?.port ?? 0)}.`
     : pipelinePackage
       ? open
         ? "installed, but its server is not answering (in Unity: Pipeline > Start Server)"
         : "installed; open the project in Unity to use it"
       : "NOT INSTALLED. It enables scene editing, the Console, tests and Unity's own compiler in the open Editor. If the user wants them, call unity_pipeline_install (they will be asked to approve)."
+
+  const probe = probeState(project.root)
+  const lastRun = probe === "missing" ? null : readRun(project.root)
+  const runtime =
+    probe === "missing"
+      ? "not installed. Without it only the Console shows what the game does. If the user wants more, call unity_probe_install."
+      : probe === "outdated"
+        ? `${installedProbe(project.root)} installed, ${PROBE_VERSION} available: call unity_probe_install to update`
+        : `${PROBE_VERSION} installed; ${lastRun ? `last play recorded ${lastRun.endedAt.slice(0, 16).replace("T", " ")} UTC (unity_play)` : "no play recorded yet"}`
 
   const yes = (value: boolean) => (value ? "yes" : "no")
   return [
@@ -70,6 +85,7 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
     `Unity CLI        ${findUnityCli() ?? "not installed"}`,
     `Editor open      ${yes(open)}`,
     `Pipeline package ${pipeline}`,
+    `Runtime probe    ${runtime}`,
     "",
     `Compile on edit  ${onEdit}`,
     `unity_compile    ${connected ? "Unity Editor recompile (Pipeline)" : projects > 0 && dotnet ? "dotnet build" : open ? "UNAVAILABLE while the Editor is open without the Pipeline package" : "Unity batch mode"}`,

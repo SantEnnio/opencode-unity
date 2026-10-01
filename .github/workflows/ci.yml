@@ -62,7 +62,8 @@ jobs:
           & ./install.ps1 -Package $package
           $plugin = Join-Path $env:OPENCODE_CONFIG_DIR "plugins\opencode-unity.js"
           $dll = Join-Path $env:OPENCODE_CONFIG_DIR "opencode-unity\symbol-exporter\symbol-exporter.dll"
-          if (-not (Test-Path $plugin) -or -not (Test-Path $dll)) { throw "files missing after install" }
+          $probe = Join-Path $env:OPENCODE_CONFIG_DIR "opencode-unity\unity-probe\Editor\Probe.cs"
+          if (-not (Test-Path $plugin) -or -not (Test-Path $dll) -or -not (Test-Path $probe)) { throw "files missing after install" }
           $url = ([System.Uri]$plugin).AbsoluteUri
           node --input-type=module -e "const m = await import('$url'); const p = m.default; if (p.id !== 'opencode-unity' || typeof p.setup !== 'function' || typeof p.server !== 'function') throw new Error('bad plugin export'); console.log('installed plugin loads')"
           if ($LASTEXITCODE -ne 0) { throw "the installed plugin does not load" }

@@ -21,6 +21,10 @@ Last updated: 2026-09-30. Version 0.2.0. Source on GitHub
 | Scene editing, flat tools (`unity_object_*`, `unity_component_*`, `unity_prefab_*`, `unity_scene_save`) | Done, verified live and **driven by a small model**: a 168-call session built a car (2026-09-20). Four failures found there are fixed, covered by tests, and the rename/re-parent one re-checked against qwen3.6-35b-a3b: the same task went from 10 calls with 3 rejections to 5 with none. See `small-model-tool-design.md` |
 | Scene editing, batch tool (`unity_scene_edit`) | Done, opt-in (`sceneTools: "batch"`). Small models cannot drive it reliably |
 | Closed-Editor routes: batch-mode compile, `unity test` / `-runTests` | Done, verified live |
+| Runtime probe, step 1 (optional Unity package, `unity_probe_install`, `unity_play` reading the last Play, play note on the next message) | Done 2026-09-30, verified live in Unity 6000.0.71f1 and opencode 2.0.20: falls, collisions, an exception and the Error Pause it caused were recorded and reduced; the note reached the model and was not stored in the session. Not yet seen with a small model, nor on Windows. See `runtime-module.md` |
+| Runtime probe with qwen3.6-35b-a3b (2026-09-30, night) | Three plain-language tasks in the sandbox, each done alone: check that W moves and Space jumps (2 min, keys chosen by the model), fix a jump bound to J (78 s, fixed and verified with a key test), fix a ball hanging in the air (88 s, missing Rigidbody, verified with a test play). Each session was read back; the fixes it prompted are in `runtime-module.md` |
+| Runtime probe, step 3 (`unity_play` with `keys`: key presses on a virtual Input System keyboard) | Done 2026-09-30, verified live: `W 2s; Space` moved a cube driven by Input Actions (7.3 m, jumped to y 1.7) and one reading `Keyboard.current` (5.8 m), with Unity in the background. Input settings are swapped for a temporary copy during the run, never saved. Only the keyboard, no mouse or gamepad |
+| Runtime probe, step 2 (`unity_play` with `new_run`: a 5 s test play with no input) | Done 2026-09-30, verified live without the Pipeline package: the probe started and stopped Play from the request file, the run was marked as the agent's, Interaction Mode was restored. ~8-9 s per call. **Not tried live**: the refusal while the user is playing, and the route through the Pipeline package's `editor_play` |
 | `unity_run_method` (whitelisted `-executeMethod`) | Written, **never run** |
 | opencode 2 | Done (2026-09-30), one bundle for both: `src/host-v1.ts` and `src/host-v2.ts` over `src/core.ts`. Verified live in 2.0.20 (CLI inside the desktop app): loading, `unity_status`, compile on edit, guards, idle gate, rules, `/unity`, `unity-coder`, consent, flat scene tools with the open Editor. Same bundle re-checked in opencode 1.18.31 |
 | Runs on Bun (opencode 1 CLI, opencode 2) and Node (opencode 1 desktop, Electron) | Done. Verified inside both desktops' runtimes; the smoke test loads the bundle under both plugin APIs on Node and on Bun, in CI too |
@@ -39,7 +43,9 @@ Last updated: 2026-09-30. Version 0.2.0. Source on GitHub
 - `com.unity.pipeline` 0.8.0-exp.1: `unity pipeline install` now installs it, and everything was
   developed against 0.7.0-exp.1. The opencode 2 checks above ran against 0.7.0-exp.1.
 - Two Editors open at once: both claim the Pipeline port 7800 and the second stays unreachable
-  (seen 2026-09-30). The plugin does not detect this yet; `/unity` only says "not connected".
+  (seen 2026-09-30). Detected since then: the other Editor answers 401, and the plugin says "two
+  Unity projects are open at once" in `/unity` and in every tool that needs the Editor, instead of
+  a generic "not connected" (qwen had retried four times on the raw "Unauthorized").
 - PlayMode tests, `unity_run_method`.
 - Scene tools not exercised live: array properties other than materials. (`unity_component_remove`
   and re-parenting/renaming through `unity_object_modify` were exercised in the 2026-09-20

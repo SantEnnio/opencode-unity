@@ -104,6 +104,8 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
 | `unity_compile` | Explicit check. Uses Unity's own compiler when it can (see below) |
 | `unity_test` | EditMode/PlayMode tests, failures only |
 | `unity_console` | Console of the open Editor (runtime errors, stack traces) |
+| `unity_probe_install` | Adds the optional runtime probe to the project, after the user agrees (only while it is missing or out of date) |
+| `unity_play` | What happened in the last Play: errors, how objects moved, collisions, input. With a path, one object's timeline. With `new_run: true`, runs the game itself for 5 s first; with `keys` (`"W 2s; Space"`), presses those keys during that run (only once the probe is installed) |
 | `unity_run_method` | `-executeMethod` for a whitelist of methods (only registered when `executeMethods` is set) |
 
 **Context**: a ~12 line rules block with the project's facts (Unity version, render pipeline,
@@ -203,6 +205,47 @@ the scene has unsaved changes: Unity would raise a "save scene?" dialog that fre
 The Pipeline package is experimental, so its command names may change. Everything that depends
 on them lives in `src/scene.ts`, `src/unity/pipeline.ts` and `src/unity/tests.ts`. Developed
 against `com.unity.pipeline` 0.7.0-exp.1.
+
+## Watching the game: the runtime probe
+
+The Console only shows what the code chose to print. It cannot say that the player *never moved*,
+where the car was at 3 s, what it hit, or whether the Jump action fired at all. The optional
+**runtime probe** can: a small Unity package that records each Play in the Editor.
+
+Install it by asking the agent (it calls `unity_probe_install` and you approve), or with
+`bunx opencode-unity probe install <project>`. It is copied into `Packages/com.opencode-unity.probe/`
+(no git needed), runs in the Editor only (nothing goes into builds), adds nothing to your scenes,
+and is removed by deleting that folder. `/unity` shows whether it is installed and up to date.
+
+While you play, it records errors (collapsed), the objects the agent created or changed plus
+anything with a Rigidbody or CharacterController, collisions, keys and Input System actions, and
+pauses. On Stop it writes `Library/OpencodeUnity/probe/last-run.json`, and the plugin reduces it to
+a few lines:
+
+```
+[unity] Recorded by the runtime probe while the user played. Last play 1.0 s, 633 frames: 2 problems.
+- NullReferenceException in Thrower.Update () (Assets/Scripts/Thrower.cs:9), 1×, first at 1.0 s: Object reference not set to an instance of an object
+- The game was paused at 1.0 s for 1.2 s: Unity pauses on the first error when Error Pause is on in the Console
+→ unity_console shows the stack traces; unity_play path "/Faller" shows its timeline.
+```
+
+That note goes with your next message, so the model knows what just happened without calling
+anything. The context is small, so the note is added to the request only, never stored in the
+session; it goes at the end, where it does not break a local server's prompt cache; it is dropped
+after two messages or at the next Play; and a Play with nothing unusual is one line. More detail,
+also fixed in size, comes from `unity_play`.
+
+The agent can also run the game itself: `unity_play` with `new_run: true` plays for 5 seconds with
+nobody pressing keys and returns the report. That checks start-up, gravity, spawning and errors,
+not the controls. For the controls, `keys` presses keys during the run, for example
+`keys: "W 2s; Space; W+D 1s; wait 1s"`, and the report then shows whether the player moved and
+which Input Actions fired. The keys go through a virtual keyboard the probe adds for the run,
+which both Input Actions and scripts reading `Keyboard.current` see; the project must use the
+Input System package (the old Input Manager cannot be driven). The probe starts and stops Play from inside Unity, so this
+works without the Pipeline package, and while Unity is in the background: for the test only, it
+sets Unity's Interaction Mode to No Throttling and puts your setting back afterwards. It refuses
+while you are playing, and while the project does not compile. The design and its measurements are in
+[docs/runtime-module.md](docs/runtime-module.md).
 
 ## Options
 
