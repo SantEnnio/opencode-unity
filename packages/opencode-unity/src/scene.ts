@@ -609,6 +609,27 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
       objects.get(path)!.add(simple)
     }
 
+    /**
+     * The object a reference value means, or null. Unity takes the path of the object that has the
+     * component; models also write the component itself: "Rigidbody", "this", "/Car/Rigidbody",
+     * "GetComponent<Rigidbody>()". Seen live: a field pointing at a component of its own object.
+     */
+    const sceneReference = (raw: string, self: string): string | null => {
+      if (objects.has(raw)) return raw
+      const text = raw.replace(/^\/+/, "").trim()
+      if (/^(this|self|me|itself|same|(this\.)?(gameObject|transform))$/i.test(text)) return self
+      const component = /^(?:this\.)?(?:GetComponent<\s*([\w.]+)\s*>\(\)|([A-Za-z_][\w.]*))$/.exec(text)
+      const type = component?.[1] ?? component?.[2]
+      if (type && objects.get(self)?.has(type.slice(type.lastIndexOf(".") + 1))) return self
+      const split = Math.max(raw.lastIndexOf("/"), raw.lastIndexOf("."))
+      if (split > 0) {
+        const owner = raw.slice(0, split)
+        const member = raw.slice(split + 1).replace(/^GetComponent<\s*([\w.]+)\s*>\(\)$/, "$1")
+        if (objects.get(owner)?.has(member)) return owner
+      }
+      return null
+    }
+
     const setValues = async (path: string, component: string, values: Record<string, unknown>) => {
       const simple = component.slice(component.lastIndexOf(".") + 1)
       if (!objects.get(path)!.has(simple)) {
@@ -649,6 +670,17 @@ export async function editScene(planner: Planner, request: EditRequest): Promise
           continue
         }
         for (const item of Array.isArray(converted) ? converted : [converted]) {
+          if (isRecord(item) && typeof item.hierarchyPath === "string") {
+            const target = sceneReference(item.hierarchyPath, path)
+            if (target) item.hierarchyPath = target
+            else {
+              const close = suggest(item.hierarchyPath, objects.keys())
+              fail(
+                `${simple}.${name} points at '${item.hierarchyPath}', and there is no object there. A reference is the path of the object that has the component, also when it is this same object: ${name}=${path}.${close.length > 0 ? ` Closest: ${close.join(", ")}.` : ""}`,
+              )
+              continue
+            }
+          }
           const asset = isRecord(item) && typeof item.path === "string" ? item.path : null
           const corrupt = asset ? corruptAsset(planner.readAsset?.(asset) ?? null) : null
           if (asset && corrupt) fail(`asset '${asset}' exists but Unity cannot load it: ${corrupt}. It was probably written by hand. Do not reference it and do not try to repair it. For a plain color use "color" on create/modify (a new material is made for you), and tell the user to delete '${asset}'.`)

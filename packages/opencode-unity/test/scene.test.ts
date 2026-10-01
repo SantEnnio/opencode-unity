@@ -191,6 +191,36 @@ describe("unity_scene_edit", () => {
     ])
   })
 
+  // Seen live (2026-09-30): a field pointing at a component of its own object. Unity wants the
+  // object's path; models write the component. Every one of these reached Unity and failed there.
+  test.each(["/Player", "Player", "Rigidbody", "this", "self", "/Player/Rigidbody", "/Player.Rigidbody", "GetComponent<Rigidbody>()", "this.GetComponent<Rigidbody>()"])(
+    "a reference to a component of the same object, written %s",
+    async (written) => {
+      const editor = fakeEditor()
+      const out = await editScene(planner(editor.call), {
+        operations: [
+          { op: "add_component", target: "/Player", type: "Follower" },
+          { op: "set", target: "/Player", component: "Follower", values: { target: written } },
+        ],
+      })
+      expect(out).not.toContain("NOT changed")
+      expect(editor.applied()!.at(-1)).toEqual({ command: "set_component_properties", params: { target: "/Player", type: "Follower", properties: { target: { hierarchyPath: "/Player" } } } })
+    },
+  )
+
+  test("a reference to an object that does not exist is refused before Unity sees it", async () => {
+    const editor = fakeEditor()
+    const out = await editScene(planner(editor.call), {
+      operations: [
+        { op: "add_component", target: "/Player/Gun", type: "Follower" },
+        { op: "set", target: "/Player/Gun", component: "Follower", values: { target: "Camera" } },
+      ],
+    })
+    expect(out).toContain("NOT changed")
+    expect(out).toContain("target=/Player/Gun")
+    expect(editor.applied()).toBeUndefined()
+  })
+
   test("a failure inside Unity is mapped back to the model's own operation", async () => {
     const editor = fakeEditor({
       batch: (params) => ({ applied: 1, reverted: true, results: [{ command: "create_gameobject", success: true }, { command: "add_component", success: false, error: "Type 'Follower' is abstract" }] }),
