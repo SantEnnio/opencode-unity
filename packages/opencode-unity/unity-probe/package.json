@@ -1,6 +1,6 @@
 {
   "name": "com.opencode-unity.probe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "displayName": "opencode-unity probe",
   "description": "Records what the game does in Play mode (errors, how objects move, collisions, input) so the opencode-unity plugin can tell a coding model. Editor only: nothing reaches a build. Remove this folder to uninstall.",
   "unity": "6000.0",

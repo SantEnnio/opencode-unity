@@ -25,7 +25,7 @@ irm https://github.com/SantEnnio/opencode-unity/releases/latest/download/install
 Run it again to update. For a classroom, download `install.ps1` and the `opencode-unity-*.tgz`
 of a [release](https://github.com/SantEnnio/opencode-unity/releases) once, put them on a shared
 drive, and on each machine run
-`powershell -ExecutionPolicy Bypass -File install.ps1 -Package opencode-unity-0.2.0.tgz`.
+`powershell -ExecutionPolicy Bypass -File install.ps1 -Package opencode-unity-0.3.0.tgz`.
 `-Uninstall` removes the plugin.
 
 **From a clone of this repository** (any OS, needs [Bun](https://bun.sh)):

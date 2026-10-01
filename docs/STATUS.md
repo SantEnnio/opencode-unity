@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-09-30. Version 0.2.0. Source on GitHub
+Last updated: 2026-10-01. Version 0.3.0. Source on GitHub
 ([SantEnnio/opencode-unity](https://github.com/SantEnnio/opencode-unity)), no npm release yet.
 
 ## What exists
