@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-10-01. Version 0.3.0. Source on GitHub
+Last updated: 2026-10-02. Version 0.4.0. Source on GitHub
 ([SantEnnio/opencode-unity](https://github.com/SantEnnio/opencode-unity)), no npm release yet.
 
 The second plugin of this repository, `opencode-game-prototype` (three.js prototypes checked in a
@@ -35,7 +35,7 @@ real browser), has its own page: [STATUS-game-prototype.md](STATUS-game-prototyp
 | Windows installer from a GitHub release (`install.ps1`: no Bun, git or admin rights) | Done. CI installs the release package with Windows PowerShell 5.1 and PowerShell 7, loads it and uninstalls. **Not yet run on a classroom machine** |
 | Global installer, npm packaging (`dist/` bundle + prebuilt exporter) | Done. `npm pack --dry-run` checked; **installing from npm untested** (nothing published) |
 
-107 unit tests, typecheck clean, smoke test passing on Node and Bun.
+140 unit tests, typecheck clean, smoke test passing on Node and Bun.
 
 ## Not verified
 

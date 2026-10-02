@@ -1,6 +1,6 @@
 # opencode-game-prototype: status
 
-Last updated: 2026-10-02. Version 0.1.0, not released. The second plugin of this repository
+Last updated: 2026-10-02. Version 0.1.0, first shipped with the repository's release v0.4.0. The second plugin of this repository
 (`packages/opencode-game-prototype`): quick three.js game prototypes with a small model, checked in
 a real browser. [STATUS.md](STATUS.md) is about `opencode-unity`.
 
