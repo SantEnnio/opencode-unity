@@ -56,9 +56,12 @@ in the user cache folder (`~/Library/Caches/opencode-unity`, `%LOCALAPPDATA%\ope
 migrates the session database there: after that, opencode 1 stops with `no such column:
 project_id`. Pick one per machine, or point opencode 1 at another data folder (`XDG_DATA_HOME`).
 
-The offline documentation is optional and installed once per Unity release stream (about 400 MB
-download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`, set
-`"docs": "auto"` in the options, or run `bunx opencode-unity docs install 6000.0`.
+**Documentation.** The plugin searches the Unity Manual and Scripting Reference offline, but does
+not download them: it uses the **Documentation module** of the Editor, which Unity Hub installs
+next to it (Installs, the menu of your Unity version, Add modules, Documentation). With the module
+installed, the plugin indexes it in the background the first time, in about 10-15 s, and keeps the
+index in its cache. Without it, `/unity` and the documentation tools say how to add it; API lookups
+(`unity_lookup`) work either way, since they read the Editor's own assemblies.
 
 ## What it does
 
@@ -78,6 +81,13 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
   | CS1501 / CS1503 / CS7036 wrong arguments | the real overloads, narrowed to the receiver's type |
   | CS0122 inaccessible | what to change |
 
+- Obsolete API that Unity would rename itself (`[Obsolete("... (UnityUpgradable) -> linearVelocity")]`)
+  is spotted in the same build, and the report ends with `→ Next: call unity_update_api`. That
+  tool makes the renames, at the compiler's positions, in the scripts the agent wrote, and shows
+  each line as it is now, so the agent's next edit matches the file. Unity then finds nothing to
+  update and does not stop on its API Updater dialog. If the agent stops first, the idle gate sends
+  it back once. Renames into another namespace or assembly stay a hint, as do APIs Unity does not
+  mark as upgradable (`FindObjectOfType`).
 - Unity-specific lints the compiler cannot do: misspelled messages (`update`, `OnColisionEnter`),
   wrong message parameter types, `GetComponent`/`Find` in `Update`, class name ≠ file name,
   coroutines called without `StartCoroutine`, `UnityEditor` in runtime code, input API that does
@@ -97,11 +107,11 @@ download, ~60 MB on disk afterwards): ask the model to call `unity_docs_install`
 |---|---|
 | `unity_status` (`/unity`) | Is the plugin active, what did it find, which routes are available |
 | `unity_lookup` | Fuzzy API lookup: signatures, overloads, obsolete → replacement, example from the docs |
-| `unity_docs_search` / `unity_docs_read` | Offline Manual + Scripting Reference + docs of the installed packages (SQLite FTS5) |
-| `unity_docs_install` | Background download + indexing of the offline documentation |
+| `unity_docs_search` / `unity_docs_read` | Manual + Scripting Reference from the Editor's Documentation module, and the docs of the installed packages, offline (SQLite FTS5) |
 | `unity_scene_view`, `unity_object_*`, `unity_component_*`, `unity_prefab_*`, `unity_scene_save` | Read and change the open scene through the Editor: objects, components, values, references, prefabs. One flat tool per action, validated before anything is touched (see below) |
 | `unity_pipeline_install` | Adds the Pipeline package to the project, only after the user has agreed |
 | `unity_compile` | Explicit check. Uses Unity's own compiler when it can (see below) |
+| `unity_update_api` | Makes Unity's own renames of obsolete API (`rb.velocity` → `rb.linearVelocity`) in the scripts the agent wrote, so Unity does not stop on its API Updater dialog; shows every changed line |
 | `unity_test` | EditMode/PlayMode tests, failures only |
 | `unity_console` | Console of the open Editor (runtime errors, stack traces) |
 | `unity_probe_install` | Adds the optional runtime probe to the project, after the user agrees (only while it is missing or out of date) |
@@ -264,7 +274,6 @@ All optional. Sources, later wins: `~/.config/opencode/opencode-unity/config.jso
   "agent": true,
   "sceneTools": "simple",          // simple = one flat tool per action (small models)
                                    // batch = unity_scene_edit with a list of operations | both
-  "docs": "manual",                // auto = download missing docs in the background
   "allow": [],                     // guard rules to switch off: meta, generated, project-files,
                                    // serialized-asset, project-settings, package-manifest
   "executeMethods": [],            // e.g. ["MyGame.Editor.Builder.Build"]
@@ -279,12 +288,12 @@ All optional. Sources, later wins: `~/.config/opencode/opencode-unity/config.jso
 | What | Where |
 |---|---|
 | Symbol graph, one per Unity version | user cache: `~/Library/Caches/opencode-unity`, `%LOCALAPPDATA%\opencode-unity`, `$XDG_CACHE_HOME/opencode-unity` |
-| Documentation index, one per release stream | same, under `docs/` |
+| Documentation index, one per Editor version | same, under `docs/` |
 | Package symbols, package docs, MSBuild targets | `<project>/Library/OpencodeUnity/` |
 | Build output | `<project>/Temp/` (Unity's own intermediate folder) |
 
-Documentation indexes are always built on the user's machine from Unity's official archive; none
-is redistributed.
+Documentation indexes are always built on the user's machine from the documentation Unity Hub
+installed with the Editor; none is redistributed.
 
 ## Platforms
 

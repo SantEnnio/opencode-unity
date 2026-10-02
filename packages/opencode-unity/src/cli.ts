@@ -1,37 +1,39 @@
 #!/usr/bin/env node
 // Maintenance commands for things too heavy to start from inside a chat session.
-//   opencode-unity docs install [unityVersion|projectPath] [--keep-zip]
-//   opencode-unity docs status  [unityVersion|projectPath]
+//   opencode-unity docs index  [projectPath]
+//   opencode-unity docs status [projectPath]
 //   opencode-unity probe <install|uninstall|status> [projectPath]
 
-import { docsDbPath, docsInstalled, docsUrl, docsStream, installDocs } from "./docs/install.ts"
+import { docsDbPath, docsReady, editorDocsDir, ensureEditorDocs } from "./docs/editor.ts"
 import { docsMeta } from "./docs/store.ts"
 import { installedProbe, installProbe, PROBE_VERSION, uninstallProbe } from "./probe/package.ts"
-import { loadProject } from "./unity/discovery.ts"
+import { findEditor, loadProject } from "./unity/discovery.ts"
 
-function resolveVersion(arg: string | undefined): string {
-  if (arg && /^\d+\.\d+/.test(arg)) return arg
-  const project = loadProject(arg ?? process.cwd())
-  if (!project) throw new Error("pass a Unity version (e.g. 6000.0) or run this inside a Unity project")
-  return project.version
+/** The project's Unity version and the Documentation module of its Editor. */
+function editorDocs(projectArg: string | undefined) {
+  const project = loadProject(projectArg ?? process.cwd())
+  if (!project) throw new Error("pass a Unity project path, or run this inside a Unity project")
+  const editor = findEditor(project.version)
+  if (!editor) throw new Error(`Unity ${project.version} is not installed`)
+  const dir = editorDocsDir(editor.root)
+  if (!dir) throw new Error(`Unity ${project.version} has no Documentation module. Add it in Unity Hub: Installs, the menu of Unity ${project.version}, Add modules, Documentation.`)
+  return { version: project.version, dir }
 }
 
 async function main(argv: string[]): Promise<number> {
   const [area, action, ...rest] = argv
-  const flags = new Set(rest.filter((a) => a.startsWith("--")))
   const positional = rest.find((a) => !a.startsWith("--"))
 
-  if (area === "docs" && action === "install") {
-    const version = resolveVersion(positional)
-    console.log(`Unity ${docsStream(version)} documentation <- ${docsUrl(docsStream(version))}`)
-    const pages = await installDocs(version, (message) => console.log(`  ${message}`), flags.has("--keep-zip"))
-    console.log(`Indexed ${pages} pages into ${docsDbPath(version)}`)
+  if (area === "docs" && action === "index") {
+    const { version, dir } = editorDocs(positional)
+    console.log(`Unity ${version} documentation <- ${dir}`)
+    const pages = await ensureEditorDocs(version, dir, (message) => console.log(`  ${message}`))
+    console.log(`${pages} pages in ${docsDbPath(version)}`)
     return 0
   }
   if (area === "docs" && action === "status") {
-    const version = resolveVersion(positional)
-    const file = docsDbPath(version)
-    console.log(docsInstalled(version) ? `installed: ${docsMeta(file, "pages")} pages in ${file}` : `not installed (${file})`)
+    const { version, dir } = editorDocs(positional)
+    console.log(docsReady(version, dir) ? `ready: ${docsMeta(docsDbPath(version), "pages")} pages from ${dir}` : `not indexed yet (${dir})`)
     return 0
   }
 
@@ -53,7 +55,7 @@ async function main(argv: string[]): Promise<number> {
     }
   }
 
-  console.error("usage: opencode-unity docs <install|status> [unityVersion|projectPath] [--keep-zip]\n       opencode-unity probe <install|uninstall|status> [projectPath]")
+  console.error("usage: opencode-unity docs <index|status> [projectPath]\n       opencode-unity probe <install|uninstall|status> [projectPath]")
   return 2
 }
 

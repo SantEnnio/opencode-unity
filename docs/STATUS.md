@@ -11,9 +11,10 @@ real browser), has its own page: [STATUS-game-prototype.md](STATUS-game-prototyp
 | Area | State |
 |---|---|
 | Compile on every `.cs` edit (`dotnet build` on Unity's generated projects, new/deleted scripts reconciled) | Done, verified on a real project and with a real small model in opencode |
+| Unity's API renames before Unity sees them (`unity_update_api`, pointed at by the compile report and the idle gate) | Done 2026-10-01, verified live with dotnet build on Unity 6000.0.71f1: `velocity`, `drag`, `angularDrag` renamed in place, build green, `FindObjectOfType` (not upgradable) left as a hint. Seen with qwen3.6-35b-a3b: asked for a brake script, it wrote `rb.velocity` and `rb.drag`, followed the report's pointer to `unity_update_api` at once, then re-read the file. The absence of Unity's dialog afterwards was not watched in an Editor |
 | Symbol graph from the Editor's DLLs + project packages, error enrichment (CS1061, CS0117, CS0246, CS0103, CS0618/9, CS1501, CS1503, CS7036, CS0122) | Done, verified on real model mistakes |
 | `unity_lookup` (fuzzy API lookup, examples from the docs) | Done, verified with a real model |
-| Offline docs: download, ZIP64 reader, HTML to text, SQLite FTS5, package docs | Done. Unity 6000.0: 34,331 pages, 61 MB index, about 20 s to install |
+| Offline docs from the Editor's Documentation module (Unity Hub), HTML to text, SQLite FTS5, package docs | Done 2026-10-01: the plugin no longer downloads documentation. Indexed live from the Hub module: 6000.0.71f1, 34,331 pages in 10 s; 6000.3.24f1, 38,412 pages in 13 s; reused afterwards (0.2 s). The Windows module location is assumed (`Editor\Data\Documentation\en`), **not checked** |
 | Unity-specific lints | Done, unit-tested. Regex based: expect some false positives/negatives on unusual formatting |
 | Guards on protected files | Done, verified |
 | Idle gate (re-prompt when the model stops on a red build) | Done. Verified live in opencode 2.0.20: the model stopped on a red build, got the message twice, and went back to work. In opencode 1 only tested with a fake client |
@@ -126,8 +127,8 @@ real browser), has its own page: [STATUS-game-prototype.md](STATUS-game-prototyp
    over the Pipeline port.
 5. npm: publishing is off (repository variable `NPM_PUBLISH`). To turn it on, use a token that
    can bypass 2FA, or trusted publishing after a first manual publish.
-6. Reduce the tool count for small models (for example hide `unity_docs_install` once the docs are
-   installed, and the scene tools when no Editor is connected).
+6. Reduce the tool count for small models (for example hide the scene tools when no Editor is
+   connected).
 7. Shell guard for `rm`/`mv` on assets; more lints (`Destroy` in loops, `CompareTag`).
 8. Better ranking between Manual and Scripting Reference in `unity_docs_search`.
 9. Runtime module: let the model learn what the game does while it plays. Designed and measured,

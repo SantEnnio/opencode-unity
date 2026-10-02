@@ -6,9 +6,10 @@ import fs from "node:fs"
 import path from "node:path"
 import { toProjectPath } from "./compile/diagnostics.ts"
 import { type CompileResult, compileWithDotnet } from "./compile/dotnet.ts"
+import { applyUpgrades, upgradesFrom } from "./compile/upgrade.ts"
 import { compileInBatchMode, compileInOpenEditor } from "./compile/editor.ts"
 import { listProjectFiles, walkScripts } from "./compile/reconcile.ts"
-import { docsDbPath, docsInstalled, docsInstalling, docsStream, indexPackageDocs, installDocs } from "./docs/install.ts"
+import { docsDbPath, docsIndexing, docsReady, editorDocsDir, ensureEditorDocs, indexPackageDocs } from "./docs/editor.ts"
 import { DocsStore } from "./docs/store.ts"
 import { Enricher, type SourceReader } from "./enrich.ts"
 import { dirFingerprint, ensureGraphDb } from "./graph/build.ts"
@@ -52,7 +53,16 @@ type SessionState = {
   noteTurns?: number
   /** The user message the play note goes with */
   noteMessage?: string
+  /** Project-relative scripts the model wrote in this session: the only ones unity_update_api touches */
+  written?: Set<string>
+  /** Unity renames still to make in those scripts, from the last compile */
+  upgrades?: number
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
+
+const UPDATE_API_NEXT = (count: number) =>
+  `→ Next: call unity_update_api. It makes Unity's own rename for ${count === 1 ? "this obsolete call" : `these ${count} obsolete calls`}, so Unity does not stop on its API Updater dialog.`
 
 // A play note is only about a game the user has just played.
 const NOTE_MAX_AGE_MS = 30 * 60_000
@@ -250,16 +260,27 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
     return DocsStore.open([docsDbPath(project.version), ...(packageDocs ? [packageDocs] : [])])
   }
 
-  function startDocsInstall(project: UnityProject) {
-    installDocs(project.version, (message) => void log("info", `docs ${docsStream(project.version)}: ${message}`)).catch((error) =>
-      log("error", `docs install failed: ${error instanceof Error ? error.message : String(error)}`),
-    )
+  /**
+   * The Unity documentation is the Editor's own Documentation module. Returns null when its index
+   * is ready, otherwise what to tell the model, and starts indexing when the module is there.
+   */
+  function docsProblem(project: UnityProject): string | null {
+    const editor = findEditor(project.version, { editorPath: options.editorPath })
+    const dir = editor ? editorDocsDir(editor.root) : null
+    if (!editor) return `Unity ${project.version} is not installed, so its manual is not available. For API questions use unity_lookup.`
+    if (!dir) {
+      return `The Unity ${project.version} manual is not installed. Ask the user to add it in Unity Hub: Installs, the menu of Unity ${project.version}, Add modules, Documentation. Meanwhile, for API questions use unity_lookup.`
+    }
+    if (docsReady(project.version, dir)) return null
+    if (!docsIndexing(project.version)) indexDocs(project.version, dir)
+    return `The Unity ${project.version} manual is being indexed (about half a minute, once). Try again shortly.`
   }
 
-  const docsHint = (project: UnityProject) =>
-    docsInstalling(project.version)
-      ? `The Unity ${docsStream(project.version)} manual is still being downloaded and indexed. Try again in a minute.`
-      : `The Unity ${docsStream(project.version)} manual is not installed (about 400 MB download). If the user agrees, call unity_docs_install.`
+  function indexDocs(version: string, dir: string) {
+    ensureEditorDocs(version, dir, (message) => log("info", `docs ${version}: ${message}`))
+      .then((pages) => log("info", `docs ${version}: ${pages} pages indexed from ${dir}`))
+      .catch((error) => log("error", `docs index failed: ${error instanceof Error ? error.message : String(error)}`))
+  }
 
   /** `explicit` = the model asked for a check: prefer Unity's own verdict over the fast approximation. */
   async function compile(project: UnityProject, explicit: boolean, signal?: AbortSignal): Promise<CompileResult> {
@@ -299,7 +320,10 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
           maxErrors: options.maxErrors,
         })
         const lint = lintReport(project, editedFiles)
-        return { failing: result.status === "errors", report: lint ? `${report}\n\n${lint}` : report }
+        const edited = new Set(editedFiles.map((f) => toProjectPath(f, project.root)))
+        const upgrades = "diagnostics" in result ? upgradesFrom(result.diagnostics).filter((u) => edited.has(u.file)) : []
+        const next = upgrades.length > 0 ? `\n\n${UPDATE_API_NEXT(upgrades.length)}` : ""
+        return { failing: result.status === "errors", report: `${lint ? `${report}\n\n${lint}` : report}${next}`, upgrades: upgrades.length }
       })
     compileQueue.set(project.root, next)
     return next
@@ -370,7 +394,8 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
 
   // Warm up front: the first graph build takes a few seconds and should not land on the first edit.
   void graphFor(startupProject)
-  if (options.docs === "auto" && !docsInstalled(startupProject.version)) startDocsInstall(startupProject)
+  // Nothing to download: if the Editor has its Documentation module, index it in the background now.
+  docsProblem(startupProject)
 
   // Small models break nested JSON arguments, so by default they get one flat tool per action.
   // The batch tool (several operations in one transaction) suits stronger models. Decided here
@@ -395,8 +420,11 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
     const project = scripts.length > 0 ? loadProject(scripts[0]!) : null
     if (!project) return null
     try {
-      const { failing, report } = await compileAndReport(project, scripts, false)
-      Object.assign(session(sessionID), { failing, report })
+      const { failing, report, upgrades } = await compileAndReport(project, scripts, false)
+      const state = session(sessionID)
+      state.written ??= new Set()
+      for (const file of scripts) state.written.add(toProjectPath(file, project.root))
+      Object.assign(state, { failing, report, upgrades })
       return report
     } catch (error) {
       log("error", `compile check failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -431,8 +459,15 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
   function idle(sessionID: string): { text: string; agent?: string; model?: { providerID: string; modelID: string } } | null {
     if (options.idleGate === false) return null
     const state = sessions.get(sessionID)
-    if (!state?.failing || state.nudges >= (options.idleGateRetries ?? 2)) return null
+    if (!state || (!state.failing && !state.upgrades) || state.nudges >= (options.idleGateRetries ?? 2)) return null
     state.nudges++
+    if (!state.failing) {
+      return {
+        text: `You stopped, but the scripts you wrote still use ${state.upgrades} obsolete Unity API call(s), and Unity will stop on its API Updater dialog for them. Call unity_update_api, then stop.`,
+        agent: state.agent,
+        model: state.model,
+      }
+    }
     return {
       text: `You stopped, but the Unity project does not compile. Fix these errors now, then stop.\n\n${state.report}`,
       agent: state.agent,
@@ -457,6 +492,40 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
         const { failing, report } = await compileAndReport(projectAt(context.directory), [], true, context.abort)
         Object.assign(session(context.sessionID), { failing, report })
         return report
+      },
+    }),
+
+    unity_update_api: defineTool({
+      description:
+        "Make Unity's own renames of obsolete API in the scripts you wrote, for example rb.velocity to rb.linearVelocity, so Unity does not stop on its API Updater dialog. Call it when a compile report says so. It shows every line it changed.",
+      args: {},
+      async execute(_args, context) {
+        const project = projectAt(context.directory)
+        const state = session(context.sessionID)
+        const files = [...(state.written ?? [])]
+        if (files.length === 0) return "[unity] You have not written any script in this session, so there is nothing to update."
+        if (listProjectFiles(project.root).length === 0) {
+          return "[unity] This needs the C# project files Unity generates, and there are none. Ask the user to pick a code editor in Unity, Preferences > External Tools, then click Regenerate project files."
+        }
+        const before = await compileWithDotnet(project.root, { timeoutMs: options.compileTimeoutMs, signal: context.abort })
+        if (!("diagnostics" in before)) return `[unity] The scripts could not be compiled to find obsolete API: ${before.reason}`
+        const upgrades = upgradesFrom(before.diagnostics).filter((u) => files.includes(u.file))
+        if (upgrades.length === 0) {
+          state.upgrades = 0
+          return "[unity] No obsolete Unity API to update in the scripts you wrote."
+        }
+        const changed = applyUpgrades(project.root, upgrades)
+        const after = await compileAndReport(project, files.map((f) => path.resolve(project.root, f)), false, context.abort)
+        Object.assign(state, { failing: after.failing, report: after.report, upgrades: after.upgrades })
+        const lines = new Map<string, string>()
+        for (const c of changed) lines.set(`${c.file}:${c.line}`, `- ${c.file}:${c.line}\n    was: ${c.before}\n    now: ${c.after}`)
+        return [
+          `[unity] Updated ${plural(changed.length, "obsolete API call")}: the same renames Unity's API Updater would make.`,
+          ...lines.values(),
+          "These files changed on disk. In any later edit, use these lines as they are now.",
+          "",
+          after.report,
+        ].join("\n")
       },
     }),
 
@@ -486,7 +555,8 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
         const docs = openDocs(project)
         try {
           const hits = docs.search(args.query)
-          const missing = docsInstalled(project.version) ? "" : `\n\n(${docsHint(project)})`
+          const problem = docsProblem(project)
+          const missing = problem ? `\n\n(${problem})` : ""
           if (hits.length === 0) return `No documentation page matches '${args.query}'. Try fewer or different keywords.${missing}`
           const lines = hits.map((h, i) => `${i + 1}) [${h.kind}] ${h.title}\n   page: ${h.path}\n   ${h.snippet.slice(0, 220)}`)
           return `${lines.join("\n")}\n\n→ unity_docs_read("${hits[0]!.path}")${missing}`
@@ -507,7 +577,7 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
         const docs = openDocs(project)
         try {
           const page = docs.page(args.page)
-          if (!page) return `No page '${args.page}'. ${docsInstalled(project.version) ? "Find the right id with unity_docs_search." : docsHint(project)}`
+          if (!page) return `No page '${args.page}'. ${docsProblem(project) ?? "Find the right id with unity_docs_search."}`
           const parts = Math.max(1, Math.ceil(page.body.length / DOC_PART_CHARS))
           const part = Math.min(args.part ?? 1, parts)
           const text = page.body.slice((part - 1) * DOC_PART_CHARS, part * DOC_PART_CHARS)
@@ -516,18 +586,6 @@ function createUnityCore(directory: string, startupProject: UnityProject, rawOpt
         } finally {
           docs.close()
         }
-      },
-    }),
-
-    unity_docs_install: defineTool({
-      description:
-        "Download and index the offline Unity documentation for this project's Unity version (about 400 MB, one time). Only call this when the user has asked for it or agreed to it.",
-      args: {},
-      async execute(_args, context) {
-        const project = projectAt(context.directory)
-        if (docsInstalled(project.version)) return `The Unity ${docsStream(project.version)} documentation is already installed.`
-        if (!docsInstalling(project.version)) startDocsInstall(project)
-        return `Started downloading the Unity ${docsStream(project.version)} documentation in the background. unity_docs_search will use it as soon as it is ready (usually a few minutes).`
       },
     }),
 

@@ -46,7 +46,7 @@
     "build:exporter": "dotnet publish ../../tools/symbol-exporter -c Release -o bin/symbol-exporter --nologo -v q",
     "install:global": "bun run scripts/install.ts",
     "uninstall:global": "bun run scripts/install.ts --uninstall",
-    "docs:install": "bun run src/cli.ts docs install",
+    "docs:index": "bun run src/cli.ts docs index",
     "prepack": "bun run scripts/prepack.ts",
     "build": "bun run scripts/bundle.ts",
     "test:node": "bun run build && node --no-warnings test/node-smoke.mjs && bun test/node-smoke.mjs"
