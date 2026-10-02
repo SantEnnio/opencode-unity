@@ -92,3 +92,37 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "the installed plugin does not load" }
           & ./install.ps1 -Uninstall
           if (Test-Path $plugin) { throw "uninstall left the plugin in place" }
+
+  # The same for the second plugin, and a test play in the runner's own Edge through the installed copy.
+  installer-prototype:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build the package
+        working-directory: packages/opencode-game-prototype
+        run: |
+          bun install --frozen-lockfile
+          npm pack
+      - name: Install, play a prototype, uninstall
+        run: |
+          $env:OPENCODE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP "opencode-config"
+          $package = (Get-Item packages/opencode-game-prototype/opencode-game-prototype-*.tgz).FullName
+          & ./install-game-prototype.ps1 -Package $package
+          $plugin = Join-Path $env:OPENCODE_CONFIG_DIR "plugins\opencode-game-prototype.js"
+          $three = Join-Path $env:OPENCODE_CONFIG_DIR "opencode-game-prototype\assets\three\three.module.js"
+          if (-not (Test-Path $plugin) -or -not (Test-Path $three)) { throw "files missing after install" }
+          node packages/opencode-game-prototype/test/installed-check.mjs $plugin
+          if ($LASTEXITCODE -ne 0) { throw "the installed plugin does not work" }
+          & ./install-game-prototype.ps1 -Uninstall
+          if (Test-Path $plugin) { throw "uninstall left the plugin in place" }

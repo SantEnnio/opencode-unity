@@ -44,18 +44,26 @@ jobs:
       # prepack builds the bundles and the symbol exporter, and copies the README.
       - run: npm pack
 
+      # The second plugin rides on the same release, with its own version and its own installer.
+      - name: Pack opencode-game-prototype
+        working-directory: packages/opencode-game-prototype
+        run: |
+          bun install --frozen-lockfile
+          npm pack
+
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          assets="opencode-unity-*.tgz ../../install.ps1 ../opencode-game-prototype/opencode-game-prototype-*.tgz ../../install-game-prototype.ps1"
           # A re-run (for example after a failed npm publish) replaces the asset of the existing release.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" opencode-unity-*.tgz ../../install.ps1 --clobber
+            gh release upload "$GITHUB_REF_NAME" $assets --clobber
             exit 0
           fi
           flags=""
           if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
-          gh release create "$GITHUB_REF_NAME" opencode-unity-*.tgz ../../install.ps1 --title "$GITHUB_REF_NAME" --generate-notes $flags
+          gh release create "$GITHUB_REF_NAME" $assets --title "$GITHUB_REF_NAME" --generate-notes $flags
 
       # Off until the repository variable NPM_PUBLISH is set to "true".
       - name: npm publish
