@@ -25,8 +25,6 @@ export type UnityPluginOptions = {
   sceneTools?: "simple" | "batch" | "both"
   /** Register the `unity-coder` agent (default true) */
   agent?: boolean
-  /** manual: docs are installed on request only. auto: download them in the background when missing. */
-  docs?: "manual" | "auto"
   /** Guard rule ids to switch off: meta, generated, project-files, serialized-asset, project-settings, package-manifest */
   allow?: string[]
   /** Static methods `unity_run_method` may execute with -executeMethod, e.g. "MyGame.Editor.Builder.Build" */

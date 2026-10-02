@@ -5,7 +5,7 @@ import fs from "node:fs"
 import path from "node:path"
 import pkg from "../package.json" with { type: "json" }
 import { listProjectFiles } from "./compile/reconcile.ts"
-import { docsDbPath, docsInstalled, docsInstalling, docsStream } from "./docs/install.ts"
+import { docsDbPath, docsIndexing, docsReady, editorDocsDir } from "./docs/editor.ts"
 import { docsMeta } from "./docs/store.ts"
 import { installedProbe, PROBE_VERSION, probeState } from "./probe/package.ts"
 import { readRun } from "./probe/report.ts"
@@ -40,11 +40,14 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
             ? "Unity Editor recompile (Pipeline)"
             : "UNAVAILABLE: no .csproj yet. In Unity: Preferences > External Tools, pick an editor, Regenerate project files"
 
-  const docs = docsInstalled(project.version)
-    ? `installed (${docsMeta(docsDbPath(project.version), "pages")} pages)`
-    : docsInstalling(project.version)
-      ? "downloading / indexing"
-      : "not installed (unity_docs_install)"
+  const docsDir = editor ? editorDocsDir(editor.root) : null
+  const docs = !docsDir
+    ? `NOT INSTALLED. Ask the user to add the Documentation module to Unity ${project.version} in Unity Hub (Installs, the menu of Unity ${project.version}, Add modules)`
+    : docsReady(project.version, docsDir)
+      ? `ready (${docsMeta(docsDbPath(project.version), "pages")} pages from the Editor's Documentation module)`
+      : docsIndexing(project.version)
+        ? "the Editor's Documentation module is being indexed"
+        : "the Editor's Documentation module is installed; indexed on first use"
 
   let pipelinePackage = false
   try {
@@ -81,7 +84,7 @@ export async function renderStatus(project: UnityProject, options: UnityPluginOp
     `Editor install   ${editor ? editor.root : "NOT FOUND (set UNITY_EDITOR_PATH): API hints are limited to the project packages"}`,
     `.NET SDK         ${dotnet ?? "NOT FOUND: no compile check, no API index"}`,
     `API index        ${fs.existsSync(symbols) ? "ready" : "not built yet (built on first use)"}`,
-    `Documentation    ${docsStream(project.version)}: ${docs}`,
+    `Documentation    ${docs}`,
     `Unity CLI        ${findUnityCli() ?? "not installed"}`,
     `Editor open      ${yes(open)}`,
     `Pipeline package ${pipeline}`,
