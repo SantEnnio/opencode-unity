@@ -21,7 +21,8 @@ function candidates(platform: NodeJS.Platform, env: Env): string[] {
   }
   if (platform === "darwin") {
     const apps = ["Google Chrome.app/Contents/MacOS/Google Chrome", "Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "Chromium.app/Contents/MacOS/Chromium"]
-    return ["/Applications", path.join(env.HOME ?? "", "Applications")].flatMap((base) => apps.map((app) => path.join(base, app)))
+    // posix on purpose, like win32 above: the paths of the platform asked for, whatever runs this.
+    return ["/Applications", path.posix.join(env.HOME ?? "", "Applications")].flatMap((base) => apps.map((app) => path.posix.join(base, app)))
   }
   return ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]
     .map((command) => which(command, env))
