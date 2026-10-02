@@ -13,3 +13,6 @@ sandbox/
 
 # copied from the repo root by prepack
 packages/opencode-unity/README.md
+
+# three.js copied from node_modules by the opencode-game-prototype build, shipped but not committed
+packages/opencode-game-prototype/assets/three/

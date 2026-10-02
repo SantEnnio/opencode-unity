@@ -31,6 +31,29 @@ jobs:
           node-version: 24
       - run: bun run test:node
 
+  prototype:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/opencode-game-prototype
+    env:
+      # Chrome's sandbox does not start on the Linux runners; the browser test runs on the other two.
+      PROTO_SKIP_LIVE: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun run test:node
+
   # The Windows installer used in classrooms, run on the package a release would ship.
   installer:
     runs-on: windows-latest

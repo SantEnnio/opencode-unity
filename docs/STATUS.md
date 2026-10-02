@@ -3,6 +3,9 @@
 Last updated: 2026-10-01. Version 0.3.0. Source on GitHub
 ([SantEnnio/opencode-unity](https://github.com/SantEnnio/opencode-unity)), no npm release yet.
 
+The second plugin of this repository, `opencode-game-prototype` (three.js prototypes checked in a
+real browser), has its own page: [STATUS-game-prototype.md](STATUS-game-prototype.md).
+
 ## What exists
 
 | Area | State |
