@@ -48,8 +48,7 @@ Run it again to update. For a classroom, download `install-game-prototype.ps1` a
 `opencode-game-prototype-*.tgz` of a [release](https://github.com/SantEnnio/opencode-unity/releases)
 once, put them on a shared drive, and on each machine run
 `powershell -ExecutionPolicy Bypass -File install-game-prototype.ps1 -Package opencode-game-prototype-0.1.0.tgz`.
-`-Uninstall` removes the plugin. The first release that carries this package is the one after
-v0.3.0.
+`-Uninstall` removes the plugin. v0.4.0 is the first release that carries this package.
 
 **From a clone of this repository** (any OS, needs [Bun](https://bun.sh)):
 
