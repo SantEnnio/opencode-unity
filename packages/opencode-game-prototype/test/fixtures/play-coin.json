@@ -1,0 +1,105 @@
+{
+ "run": {
+  "id": "fixture",
+  "page": "coin-run",
+  "seconds": 2.122,
+  "frames": 127,
+  "rafFrames": 127,
+  "visible": true,
+  "three": "186",
+  "drawn": true,
+  "calls": 2,
+  "pixels": {
+   "flat": false,
+   "color": "65,132,75"
+  },
+  "hud": [
+   "Score 0",
+   "Score 1"
+  ],
+  "events": [],
+  "objects": [
+   {
+    "label": "Ground",
+    "start": [
+     0,
+     -0.5,
+     0
+    ],
+    "end": [
+     0,
+     -0.5,
+     0
+    ],
+    "far": 0,
+    "rose": 0,
+    "pushedUp": [],
+    "added": null,
+    "removed": null,
+    "onScreen": true
+   },
+   {
+    "label": "Player",
+    "start": [
+     0,
+     0.5,
+     0
+    ],
+    "end": [
+     5.083,
+     0.5,
+     0
+    ],
+    "far": 5.083499999999998,
+    "rose": 0,
+    "pushedUp": [],
+    "added": null,
+    "removed": null,
+    "onScreen": true
+   },
+   {
+    "label": "Coin",
+    "start": [
+     4,
+     0.5,
+     0
+    ],
+    "end": [
+     4,
+     0.5,
+     0
+    ],
+    "far": 0,
+    "rose": 0,
+    "pushedUp": [],
+    "added": null,
+    "removed": 0.619,
+    "onScreen": true
+   },
+   {
+    "label": "Camera",
+    "start": [
+     0,
+     6,
+     10
+    ],
+    "end": [
+     0,
+     6,
+     10
+    ],
+    "far": 0,
+    "rose": 0,
+    "added": null,
+    "removed": null,
+    "onScreen": null,
+    "camera": true,
+    "pushedUp": []
+   }
+  ]
+ },
+ "missing": [],
+ "keys": "D 1s",
+ "held": 1,
+ "ranIn": "headless"
+}

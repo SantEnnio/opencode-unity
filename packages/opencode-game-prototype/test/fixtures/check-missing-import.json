@@ -1,0 +1,34 @@
+{
+ "run": {
+  "id": "fixture",
+  "page": "coin-run",
+  "seconds": 1.006,
+  "frames": 0,
+  "rafFrames": 61,
+  "visible": true,
+  "three": null,
+  "drawn": false,
+  "calls": null,
+  "pixels": null,
+  "hud": [
+   "",
+   ""
+  ],
+  "events": [
+   {
+    "kind": "load",
+    "text": "could not load main.js",
+    "where": "",
+    "count": 1,
+    "first": 0
+   }
+  ],
+  "objects": []
+ },
+ "missing": [
+  "enemy.js"
+ ],
+ "keys": null,
+ "held": 0,
+ "ranIn": "headless"
+}

@@ -1,0 +1,32 @@
+{
+ "run": {
+  "id": "fixture",
+  "page": "coin-run",
+  "seconds": 1.005,
+  "frames": 0,
+  "rafFrames": 61,
+  "visible": true,
+  "three": "186",
+  "drawn": true,
+  "calls": 0,
+  "pixels": null,
+  "hud": [
+   "",
+   ""
+  ],
+  "events": [
+   {
+    "kind": "exception",
+    "text": "TypeError: THREE.Geometry is not a constructor",
+    "where": "main.js:18",
+    "count": 1,
+    "first": 0
+   }
+  ],
+  "objects": []
+ },
+ "missing": [],
+ "keys": null,
+ "held": 0,
+ "ranIn": "headless"
+}

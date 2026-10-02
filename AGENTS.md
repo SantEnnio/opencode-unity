@@ -28,5 +28,11 @@
   code must run on Windows, macOS and Linux.
 - Read `docs/STATUS.md` before starting (what is done, verified, broken) and update it when that
   changes. `docs/small-model-tool-design.md` holds the rules for anything a model reads or calls.
+- A second plugin, `packages/opencode-game-prototype` (three.js game prototypes, checked in a real
+  browser), follows the same rules. It imports `args.ts`, `runtime.ts`, `written-paths.ts`,
+  `configDir` and `probe/keys.ts` from `packages/opencode-unity/src`: a change to those must keep
+  both packages green. Its checks are `bun test`, `bun run typecheck` and `bun run test:node` in
+  its own folder; `bun test` there starts Edge or Chrome with no window when one is installed.
+  Its status page is `docs/STATUS-game-prototype.md`.
 - `sandbox/` is git-ignored scratch space for throwaway Unity projects. Never point tests at a
   real user project.

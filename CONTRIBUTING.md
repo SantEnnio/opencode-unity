@@ -9,6 +9,10 @@ bun run test:node       # the bundle on plain Node
 bun run typecheck
 ```
 
+The second plugin, `packages/opencode-game-prototype`, has the same commands minus the exporter
+(`bun install`, `bun test`, `bun run test:node`, `bun run typecheck`). Its tests start Edge or
+Chrome with no window when one is installed; `PROTO_SKIP_LIVE=1` leaves that part out.
+
 A few things that are easy to get wrong:
 
 - One bundle serves opencode 1 and opencode 2. `src/index.ts` default-exports

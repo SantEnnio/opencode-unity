@@ -1,0 +1,110 @@
+{
+ "run": {
+  "id": "fixture",
+  "page": "coin-run",
+  "seconds": 2.506,
+  "frames": 37,
+  "rafFrames": 150,
+  "visible": true,
+  "three": "186",
+  "drawn": true,
+  "calls": 3,
+  "pixels": null,
+  "hud": [
+   "Score 0",
+   "Score 0"
+  ],
+  "events": [
+   {
+    "kind": "exception",
+    "text": "TypeError: coin.explode is not a function",
+    "where": "main.js:46",
+    "count": 1,
+    "first": 0.63
+   }
+  ],
+  "objects": [
+   {
+    "label": "Ground",
+    "start": [
+     0,
+     -0.5,
+     0
+    ],
+    "end": [
+     0,
+     -0.5,
+     0
+    ],
+    "far": 0,
+    "rose": 0,
+    "pushedUp": [],
+    "added": null,
+    "removed": null,
+    "onScreen": true
+   },
+   {
+    "label": "Player",
+    "start": [
+     0,
+     0.5,
+     0
+    ],
+    "end": [
+     3.167,
+     0.5,
+     0
+    ],
+    "far": 3.166500000000002,
+    "rose": 0,
+    "pushedUp": [],
+    "added": null,
+    "removed": null,
+    "onScreen": true
+   },
+   {
+    "label": "Coin",
+    "start": [
+     4,
+     0.5,
+     0
+    ],
+    "end": [
+     4,
+     0.5,
+     0
+    ],
+    "far": 0,
+    "rose": 0,
+    "pushedUp": [],
+    "added": null,
+    "removed": null,
+    "onScreen": true
+   },
+   {
+    "label": "Camera",
+    "start": [
+     0,
+     6,
+     10
+    ],
+    "end": [
+     0,
+     6,
+     10
+    ],
+    "far": 0,
+    "rose": 0,
+    "added": null,
+    "removed": null,
+    "onScreen": null,
+    "camera": true,
+    "pushedUp": []
+   }
+  ]
+ },
+ "missing": [],
+ "keys": "D 1s",
+ "held": 1,
+ "ranIn": "headless"
+}
