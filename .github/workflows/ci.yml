@@ -40,12 +40,13 @@ jobs:
     defaults:
       run:
         working-directory: packages/opencode-game-prototype
-    env:
-      # Chrome's sandbox does not start on the Linux runners; the browser test runs on the other two.
-      PROTO_SKIP_LIVE: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      # Ubuntu 24.04 forbids the user namespaces Chrome's sandbox is made of, to anything without
+      # an AppArmor profile. Lifted here so the browser test runs on Linux too.
+      - if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test

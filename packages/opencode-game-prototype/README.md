@@ -36,7 +36,22 @@ errors that happen in it while the user plays go to the model with the user's ne
 
 ## Install
 
-From a clone of this repository (needs [Bun](https://bun.sh)):
+Works with opencode 1 and opencode 2. It needs Edge or Chrome on the machine, nothing else.
+
+**Windows, from a release** (no Bun, git or administrator rights needed). In PowerShell:
+
+```powershell
+irm https://github.com/SantEnnio/opencode-unity/releases/latest/download/install-game-prototype.ps1 | iex
+```
+
+Run it again to update. For a classroom, download `install-game-prototype.ps1` and the
+`opencode-game-prototype-*.tgz` of a [release](https://github.com/SantEnnio/opencode-unity/releases)
+once, put them on a shared drive, and on each machine run
+`powershell -ExecutionPolicy Bypass -File install-game-prototype.ps1 -Package opencode-game-prototype-0.1.0.tgz`.
+`-Uninstall` removes the plugin. The first release that carries this package is the one after
+v0.3.0.
+
+**From a clone of this repository** (any OS, needs [Bun](https://bun.sh)):
 
 ```sh
 cd packages/opencode-game-prototype
@@ -44,8 +59,9 @@ bun install
 bun run install:global      # bun run uninstall:global to remove
 ```
 
-This puts the plugin in `~/.config/opencode/plugins/opencode-game-prototype.js`, with its assets
-in `~/.config/opencode/opencode-game-prototype/`.
+Both put the plugin in `~/.config/opencode/plugins/opencode-game-prototype.js` (on Windows
+`%USERPROFILE%\.config\opencode\...`), with its assets in
+`~/.config/opencode/opencode-game-prototype/`.
 
 ## Options
 
