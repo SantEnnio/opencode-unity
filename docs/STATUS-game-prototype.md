@@ -93,6 +93,11 @@ mistake.
   still shifts values a little (`8.4` then `8.2`). The user's own tab stays random.
 - Whether something is in front of the camera is judged by object centres and a grid of pixels:
   enough to say "nothing is visible", not to say what is.
+- Found by CI on 2026-10-04, fixed: on a slow machine the first frame's timestamp can precede the
+  call to `game.run`, so the kit's first `dt` was negative and gravity threw the player upward
+  (y −34 on the macOS runner). The step is now clamped to `[0, 0.05]`. The browser tests on the
+  three runners are what caught it; a classroom PC with software rendering would have shown the
+  same.
 - Keys are held by the clock, the game advances by frames: on a busy machine a key held for 1 s
   moves the player less (4.3 instead of 5.0 was seen while another browser was working).
 - The kit's loop ends at the first error inside it. The report says so, but the user sees a frozen

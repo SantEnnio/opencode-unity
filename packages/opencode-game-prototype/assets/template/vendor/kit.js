@@ -81,8 +81,10 @@ export function createGame({ background = 0x20262e } = {}) {
   let update = null
   let last = 0
   const frame = (now) => {
-    // A long pause (a hidden tab, a breakpoint) must not become one huge step.
-    const dt = Math.min(0.05, (now - last) / 1000)
+    // A long pause (a hidden tab, a breakpoint) must not become one huge step. The first frame's
+    // timestamp can precede run() itself on a slow machine: never a negative step either, or
+    // gravity would throw the player upward.
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000))
     last = now
     update(dt)
     renderer.render(scene, camera)
