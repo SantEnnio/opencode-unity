@@ -11,7 +11,8 @@
     irm https://github.com/SantEnnio/opencode-unity/releases/latest/download/install-game-prototype.ps1 | iex
 
 .PARAMETER Version
-  Release tag to install, for example v0.4.0. Default: the latest release.
+  Release tag to install, for example v0.4.0 or game-prototype-v0.2.0. Default: the newest release
+  that carries this package.
 
 .PARAMETER Package
   Path to an opencode-game-prototype-*.tgz already downloaded (offline install, or a shared drive).
@@ -51,9 +52,16 @@ try {
   } else {
     # Windows PowerShell 5.1 does not enable TLS 1.2 by default.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    if ($Version) { $Api = "https://api.github.com/repos/$Repo/releases/tags/$Version" }
-    else { $Api = "https://api.github.com/repos/$Repo/releases/latest" }
-    $Release = Invoke-RestMethod -Uri $Api -Headers @{ "User-Agent" = "opencode-game-prototype-installer" }
+    $Headers = @{ "User-Agent" = "opencode-game-prototype-installer" }
+    if ($Version) {
+      $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$Version" -Headers $Headers
+    } else {
+      # The newest release that carries this package: a release of the repository (vX.Y.Z) or of
+      # this package alone (game-prototype-vX.Y.Z), whichever came last.
+      $Releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=30" -Headers $Headers
+      $Release = $Releases | Where-Object { -not $_.prerelease -and -not $_.draft -and ($_.assets | Where-Object { $_.name -like "opencode-game-prototype-*.tgz" }) } | Select-Object -First 1
+      if (-not $Release) { throw "No release of $Repo carries an opencode-game-prototype package yet." }
+    }
     $Asset = $Release.assets | Where-Object { $_.name -like "opencode-game-prototype-*.tgz" } | Select-Object -First 1
     if (-not $Asset) { throw "Release $($Release.tag_name) has no opencode-game-prototype package attached." }
     $Tarball = Join-Path $Work $Asset.name

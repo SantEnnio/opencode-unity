@@ -1,6 +1,6 @@
 {
   "name": "opencode-game-prototype",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "opencode plugin that lets small/local models build a quick three.js game prototype: a page that works from the start, a real browser check on every edit, test plays with key presses.",
   "keywords": [
     "opencode",

@@ -27,9 +27,20 @@ project the prototypes go in `.prototypes/<name>/` at the project root, out of t
    next to the phase in `PLAN.md`. The idle gate sends the model back when it stops with a phase
    still failing.
 
+4. **Hand in.** Everything the plugin saw goes into `.proto/journal.jsonl` inside the prototype,
+   and `proto_export` (or `/prototype-export`) writes `SESSION.md` from it: the plan as it stands,
+   the numbers (edits checked, tests passed), a timeline, and every phase test in full. The folder
+   is the thing to collect: code, `PLAN.md`, `SESSION.md`, journal.
+
 Also: `proto_play` for a free test play with keys, `proto_lookup` for the fields and methods of
 any three.js class in the shipped version, `proto_status` and `/prototype`, the `game-prototyper`
-agent and a short rules block, a guard on `vendor/`.
+agent and a short rules block, a guard on `vendor/` and on the plugin's own files.
+
+The kit (`vendor/kit.js`, fixed) is what the starter game is written with: `createGame()` with
+`game.box(name, w, h, d, colour)` and `game.sphere(name, r, colour)`, `game.run((dt) => …)`,
+`keys.down`/`keys.pressed`, `overlap(a, b)`, `onTop(a, b)`, `follow(camera, target, dx, dy, dz)`,
+`hud(text)`. A model copies what `main.js` shows, so the kit covers what small models wrote worst
+in the sessions so far: standing on things, following cameras, named shapes.
 
 ## How the page is tested
 
@@ -53,8 +64,9 @@ irm https://github.com/SantEnnio/opencode-unity/releases/latest/download/install
 Run it again to update. For a classroom, download `install-game-prototype.ps1` and the
 `opencode-game-prototype-*.tgz` of a [release](https://github.com/SantEnnio/opencode-unity/releases)
 once, put them on a shared drive, and on each machine run
-`powershell -ExecutionPolicy Bypass -File install-game-prototype.ps1 -Package opencode-game-prototype-0.1.0.tgz`.
-`-Uninstall` removes the plugin. v0.4.0 is the first release that carries this package.
+`powershell -ExecutionPolicy Bypass -File install-game-prototype.ps1 -Package opencode-game-prototype-0.2.0.tgz`.
+`-Uninstall` removes the plugin. The installer picks the newest release that carries this package,
+whether a release of the repository (`vX.Y.Z`) or of this package alone (`game-prototype-vX.Y.Z`).
 
 **From a clone of this repository** (any OS, needs [Bun](https://bun.sh)):
 

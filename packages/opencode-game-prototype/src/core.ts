@@ -8,6 +8,7 @@ import { arg, defineTool, optional, type ToolSpec } from "../../opencode-unity/s
 import { writtenPaths } from "../../opencode-unity/src/written-paths.ts"
 import { fixFor, instead, kitMistakes, threeExports, unknownNames } from "./api.ts"
 import { findBrowser, launchHeadless } from "./browser.ts"
+import { JOURNAL_DIR, journal, readJournal, renderSession, SESSION_FILE } from "./journal.ts"
 import { parseWebKeys } from "./keys.ts"
 import { createLookup } from "./lookup.ts"
 import { loadOptions } from "./options.ts"
@@ -19,11 +20,18 @@ import { createServer } from "./server.ts"
 
 export type Log = (level: "info" | "warn" | "error", message: string) => void
 
-export const PROTO_COMMAND = {
-  name: "prototype",
-  description: "opencode-game-prototype: is the plugin active, which prototypes exist, and where to open them?",
-  template: "Call the proto_status tool and show me its output exactly as returned, in a code block. Do nothing else.",
-}
+export const PROTO_COMMANDS = [
+  {
+    name: "prototype",
+    description: "opencode-game-prototype: is the plugin active, which prototypes exist, and where to open them?",
+    template: "Call the proto_status tool and show me its output exactly as returned, in a code block. Do nothing else.",
+  },
+  {
+    name: "prototype-export",
+    description: "opencode-game-prototype: write SESSION.md, the report of the work on the current prototype, to hand in with the folder",
+    template: "Call the proto_export tool and show me its output exactly as returned. Do nothing else.",
+  },
+]
 
 export const PROTO_AGENT = {
   name: "game-prototyper",
@@ -224,12 +232,13 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
         if (fs.existsSync(dir)) return `[proto] Not created: a folder named ${shown(dir, context.directory)} already exists and it is not a prototype. Call proto_new with another name.`
 
         createPrototype(where.root, name)
+        journal(path.join(where.root, name), { session: context.sessionID, event: "new", detail: { name } })
         session(context.sessionID).current = name
         const port = await server.start()
         const plan = shown(path.join(dir, PLAN_FILE), context.directory)
         return [
           `[proto] Created "${name}" in ${shown(dir, context.directory)} (three.js ${threeRevision}).`,
-          "It already runs: a Player box moves with W A S D and jumps with Space, and touching the Coin adds to the score.",
+          "It already runs: a Player box moves with W A S D and jumps with Space, the camera follows it, and touching the Coin adds to the score.",
           `The user can watch it at ${address(port, name)} (it reloads on every edit).`,
           `→ Next: read ${main}, then write ${plan}: the idea, and the phases with their Test and Expect lines. ${main} cannot be changed before that.`,
         ].join("\n")
@@ -254,6 +263,7 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
         if (typeof outcome === "string") return outcome
         const { failing, report } = playReport(prototype.name, outcome)
         Object.assign(state, { failing, report })
+        journal(prototype.dir, { session: context.sessionID, event: "play", detail: { keys: script?.text ?? null, failing }, text: report })
         return report
       },
     }),
@@ -329,6 +339,8 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
             : "→ Next: go on to the next phase of PLAN.md."
         const report = [head, ...lines, next].join("\n")
         Object.assign(state, { failing, report })
+        journal(prototype.dir, { session: context.sessionID, event: "test", detail: { phase: args.phase?.trim() || null, passed: passedPhases.size, total: ready.length }, text: report })
+        writeSession(prototype)
         return report
       },
     }),
@@ -337,8 +349,27 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
       description:
         'Look up a three.js class in the exact version of this prototype: its fields and methods, or whether one member exists. Examples: "Mesh", "Vector3.distanceTo", "Object3D.lookAt". Call it before using a three.js method you are not sure about.',
       args: { name: arg.string('Class, or Class.member, e.g. "Mesh" or "Vector3.distanceTo"') },
-      async execute(args) {
-        return lookup(args.name)
+      async execute(args, context) {
+        const answer = await lookup(args.name)
+        const prototype = pick(context.sessionID, undefined, "proto_lookup")
+        if (typeof prototype !== "string") journal(prototype.dir, { session: context.sessionID, event: "lookup", detail: { query: args.name }, text: answer })
+        return answer
+      },
+    }),
+
+    proto_export: defineTool({
+      description:
+        "Write SESSION.md inside the prototype: the plan as it stands, the numbers (edits, checks, tests passed), a timeline of everything the plugin saw, and every phase test in full. Call it when the user asks for a report of the work, or at the end.",
+      args: { name: optional(arg.string("Folder name of the prototype. Leave out to use the one you are working on.")) },
+      async execute(args, context) {
+        const prototype = pick(context.sessionID, args.name, "proto_export")
+        if (typeof prototype === "string") return prototype
+        journal(prototype.dir, { session: context.sessionID, event: "export", detail: {} })
+        const file = writeSession(prototype)
+        if (!file) return `[proto] ${SESSION_FILE} could not be written in ${shown(prototype.dir, context.directory)}.`
+        const entries = readJournal(prototype.dir)
+        const tests = entries.filter((e) => e.event === "test")
+        return `[proto] Report written: ${shown(file, context.directory)} (${entries.length} events, ${tests.length} phase tests, ${entries.filter((e) => e.event === "check").length} checked edits). The whole folder ${shown(prototype.dir, context.directory)} is the thing to hand in: code, PLAN.md, SESSION.md and .proto/journal.jsonl.`
       },
     }),
 
@@ -367,19 +398,25 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
    * Refuses writes into vendor/, and changes to the code before PLAN.md is written. Returns the
    * reason, or null when the write may go ahead.
    */
-  function guardWrite(toolName: string, args: unknown, directory: string): string | null {
+  function guardWrite(toolName: string, args: unknown, directory: string, sessionID = ""): string | null {
     for (const file of writtenPaths(toolName, args, directory)) {
       const hit = prototypeOf(where.root, file)
       if (!hit) continue
+      let reason: string | null = null
       if (hit.inside.startsWith("vendor/")) {
-        return `[proto] Blocked: ${hit.inside} is part of three.js and the kit, which are fixed. Write your code in main.js, or in a new .js file next to it that main.js imports.`
-      }
-      if (options.planFirst !== false && hit.inside !== PLAN_FILE && CHECKED.has(path.extname(hit.inside).toLowerCase())) {
+        reason = `[proto] Blocked: ${hit.inside} is part of three.js and the kit, which are fixed. Write your code in main.js, or in a new .js file next to it that main.js imports.`
+      } else if (hit.inside === SESSION_FILE || hit.inside.startsWith(`${JOURNAL_DIR}/`)) {
+        reason = `[proto] Blocked: ${hit.inside} is the plugin's own record of this prototype. It is written by proto_test and proto_export, not by hand.`
+      } else if (options.planFirst !== false && hit.inside !== PLAN_FILE && CHECKED.has(path.extname(hit.inside).toLowerCase())) {
         const plan = readText(path.join(hit.prototype.dir, PLAN_FILE))
         if (plan !== null && !planReady(plan)) {
           const why = planProblems(plan).slice(0, 3).join("; ")
-          return `[proto] Blocked: write ${shown(path.join(hit.prototype.dir, PLAN_FILE), directory)} first. ${why}. Then change ${hit.inside}.`
+          reason = `[proto] Blocked: write ${shown(path.join(hit.prototype.dir, PLAN_FILE), directory)} first. ${why}. Then change ${hit.inside}.`
         }
+      }
+      if (reason) {
+        journal(hit.prototype.dir, { session: sessionID, event: "blocked", detail: { file: hit.inside }, text: reason })
+        return reason
       }
     }
     return null
@@ -392,7 +429,10 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
       const plan = written.find((found) => found?.inside === PLAN_FILE)
       if (plan) {
         session(sessionID).current = plan.prototype.name
-        return planFeedback(plan.prototype, directory)
+        const feedback = planFeedback(plan.prototype, directory)
+        const text = readText(path.join(plan.prototype.dir, PLAN_FILE)) ?? ""
+        journal(plan.prototype.dir, { session: sessionID, event: "plan", detail: { ready: planReady(text), phases: parsePlan(text).phases.length, problems: planProblems(text).length }, text: feedback })
+        return feedback
       }
       const hit = written.find((found) => found !== null && CHECKED.has(path.extname(found.inside).toLowerCase()))
       if (!hit) return null
@@ -404,9 +444,22 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
       if (typeof outcome === "string") return outcome
       const { failing, report } = checkReport(hit.prototype.name, outcome)
       Object.assign(state, { failing, report })
+      journal(hit.prototype.dir, { session: sessionID, event: "check", detail: { file: hit.inside, failing }, text: report })
       return report
     } catch (error) {
       log("error", `page check failed: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    }
+  }
+
+  /** SESSION.md from the journal; returns its path, or null when it could not be written. */
+  function writeSession(prototype: Prototype): string | null {
+    const file = path.join(prototype.dir, SESSION_FILE)
+    try {
+      fs.writeFileSync(file, renderSession(prototype.name, prototype.dir, readJournal(prototype.dir), { version: pluginPackage.version, three: threeRevision }))
+      return file
+    } catch (error) {
+      log("warn", `${SESSION_FILE} not written: ${error instanceof Error ? error.message : String(error)}`)
       return null
     }
   }

@@ -43,7 +43,13 @@ the Unity version, and the OS.
 
 The `Release` workflow runs the full CI, builds the package (`npm pack`) and attaches it to a GitHub
 release. `opencode-game-prototype` is packed and attached to the same release, with its own version
-(from its `package.json`) and its own `install-game-prototype.ps1`; it is not published to npm. Publishing to npm, with provenance, is off until the repository variable `NPM_PUBLISH` is
+(from its `package.json`) and its own `install-game-prototype.ps1`; it is not published to npm.
+
+To release `opencode-game-prototype` alone, set its version in
+`packages/opencode-game-prototype/package.json`, commit, and push a tag `game-prototype-vX.Y.Z`.
+That release is never marked latest (so `install.ps1` still finds the opencode-unity package in
+the latest one); `install-game-prototype.ps1` looks for the newest release that carries its
+package, whichever kind it is. Publishing to npm, with provenance, is off until the repository variable `NPM_PUBLISH` is
 set to `true`. A tag with a pre-release suffix (`v0.2.0-beta.1`)
 becomes a GitHub pre-release and the npm `next` tag. The workflow needs an npm granular access token with
 "Bypass two-factor authentication" enabled, in the repository secret `NPM_TOKEN`. A failed run can

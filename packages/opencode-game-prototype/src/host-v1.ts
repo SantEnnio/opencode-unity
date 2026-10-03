@@ -2,7 +2,7 @@
 
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 import { toZodShape } from "../../opencode-unity/src/args.ts"
-import { createPrototypes, PROTO_COMMAND } from "./core.ts"
+import { createPrototypes, PROTO_COMMANDS } from "./core.ts"
 
 export async function server({ client, directory }: PluginInput, rawOptions?: unknown): Promise<Hooks> {
   const log = (level: "info" | "warn" | "error", message: string) =>
@@ -29,7 +29,7 @@ export async function server({ client, directory }: PluginInput, rawOptions?: un
     tool: tools,
 
     "tool.execute.before": async (input, output) => {
-      const blocked = proto.guardWrite(input.tool, output.args, directory)
+      const blocked = proto.guardWrite(input.tool, output.args, directory, input.sessionID)
       if (blocked) throw new Error(blocked)
     },
 
@@ -66,9 +66,9 @@ export async function server({ client, directory }: PluginInput, rawOptions?: un
     },
 
     config: async (config) => {
-      config.command = {
-        ...config.command,
-        [PROTO_COMMAND.name]: { description: PROTO_COMMAND.description, template: PROTO_COMMAND.template, ...config.command?.[PROTO_COMMAND.name] },
+      config.command = { ...config.command }
+      for (const command of PROTO_COMMANDS) {
+        config.command[command.name] = { description: command.description, template: command.template, ...config.command[command.name] }
       }
       if (!proto.agent) return
       const { name, description, temperature, prompt } = proto.agent

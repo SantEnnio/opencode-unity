@@ -13,7 +13,7 @@ export function renderRules(facts: { revision: string; folder: string; engine: E
     "- One phase at a time: change main.js, read the [proto] report that comes with the edit, then call proto_test with the phase number. Fix until it says PASSED; proto_test writes the result next to the phase.",
     "- Every edit of a prototype file is loaded in a real browser automatically. If the [proto] report says FAILED, fix the listed errors before anything else.",
     `- three.js is exactly ${facts.revision}. Import it only with: import * as THREE from "three". No CDN links, no require(), no other libraries. Unsure a class or method exists? Call proto_lookup first.`,
-    '- The kit gives the game loop, the keyboard, overlap tests and text on screen: import { createGame, keys, overlap, hud } from "kit". Use it the way main.js does. Do not write your own render loop or key listeners.',
+    '- The kit gives the game loop, named boxes and spheres, the keyboard, overlap and standing-on tests, a following camera and text on screen: import { createGame, keys, overlap, onTop, landOn, follow, hud } from "kit". Use it the way main.js does: landOn(player, ground) is how things land, on the ground or on a platform. Do not write your own render loop or key listeners.',
     '- Give every object a name (player.name = "Player"): the test reports use the names.',
     "- Shapes are boxes, spheres and other three.js geometries with plain colors. No image, model or sound files.",
     '- To test what the player can do, call proto_play with keys, for example keys "D 1s; Space".',

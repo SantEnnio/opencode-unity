@@ -1,11 +1,16 @@
 name: Release
 
-# Push a tag `vX.Y.Z` whose version matches packages/opencode-unity/package.json.
-# A tag with a pre-release suffix (`v0.2.0-beta.1`) becomes a GitHub pre-release and the npm `next` tag.
+# Two kinds of tag:
+#   vX.Y.Z                 a release of the repository: opencode-unity at that version (the tag must
+#                          match packages/opencode-unity/package.json), with opencode-game-prototype
+#                          at whatever version it has, and both installers. This is the "latest" release.
+#   game-prototype-vX.Y.Z  opencode-game-prototype alone (the tag must match its package.json), never
+#                          marked latest, so install.ps1 keeps finding its package in the latest release.
+# A pre-release suffix (`v0.2.0-beta.1`) becomes a GitHub pre-release and, for opencode-unity, the npm `next` tag.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "game-prototype-v*"]
 
 jobs:
   test:
@@ -17,9 +22,6 @@ jobs:
     permissions:
       contents: write # create the GitHub release
       id-token: write # npm provenance
-    defaults:
-      run:
-        working-directory: packages/opencode-unity
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -31,20 +33,29 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Check that the tag matches package.json
+      - name: Which release this is, and that the tag matches package.json
+        id: kind
         run: |
-          version=$(node -p "require('./package.json').version")
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
+          case "$GITHUB_REF_NAME" in
+            game-prototype-v*) kind=game-prototype; version="${GITHUB_REF_NAME#game-prototype-v}"; expected=$(node -p "require('./packages/opencode-game-prototype/package.json').version") ;;
+            v*) kind=repository; version="${GITHUB_REF_NAME#v}"; expected=$(node -p "require('./packages/opencode-unity/package.json').version") ;;
+            *) echo "::error::Unexpected tag $GITHUB_REF_NAME"; exit 1 ;;
+          esac
+          if [ "$version" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $expected"
             exit 1
           fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
           case "$version" in *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;; *) echo "PRERELEASE=false" >> "$GITHUB_ENV" ;; esac
 
-      - run: bun install --frozen-lockfile
-      # prepack builds the bundles and the symbol exporter, and copies the README.
-      - run: npm pack
+      - name: Pack opencode-unity
+        if: steps.kind.outputs.kind == 'repository'
+        working-directory: packages/opencode-unity
+        # prepack builds the bundles and the symbol exporter, and copies the README.
+        run: |
+          bun install --frozen-lockfile
+          npm pack
 
-      # The second plugin rides on the same release, with its own version and its own installer.
       - name: Pack opencode-game-prototype
         working-directory: packages/opencode-game-prototype
         run: |
@@ -54,20 +65,28 @@ jobs:
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          KIND: ${{ steps.kind.outputs.kind }}
         run: |
-          assets="opencode-unity-*.tgz ../../install.ps1 ../opencode-game-prototype/opencode-game-prototype-*.tgz ../../install-game-prototype.ps1"
-          # A re-run (for example after a failed npm publish) replaces the asset of the existing release.
+          assets="packages/opencode-game-prototype/opencode-game-prototype-*.tgz install-game-prototype.ps1"
+          flags=""
+          if [ "$KIND" = "repository" ]; then
+            assets="$assets packages/opencode-unity/opencode-unity-*.tgz install.ps1"
+          else
+            # install.ps1 reads the latest release: a release without the opencode-unity package must not be it.
+            flags="--latest=false"
+          fi
+          if [ "$PRERELEASE" = "true" ]; then flags="$flags --prerelease"; fi
+          # A re-run (for example after a failed npm publish) replaces the assets of the existing release.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" $assets --clobber
             exit 0
           fi
-          flags=""
-          if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
           gh release create "$GITHUB_REF_NAME" $assets --title "$GITHUB_REF_NAME" --generate-notes $flags
 
-      # Off until the repository variable NPM_PUBLISH is set to "true".
+      # Off until the repository variable NPM_PUBLISH is set to "true". Only opencode-unity goes to npm.
       - name: npm publish
-        if: vars.NPM_PUBLISH == 'true'
+        if: steps.kind.outputs.kind == 'repository' && vars.NPM_PUBLISH == 'true'
+        working-directory: packages/opencode-unity
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |

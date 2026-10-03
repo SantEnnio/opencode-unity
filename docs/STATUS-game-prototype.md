@@ -1,7 +1,7 @@
 # opencode-game-prototype: status
 
-Last updated: 2026-10-03. Version 0.1.0, first shipped with the repository's release v0.4.0 (the
-plan-and-phases flow below came after it and is not released yet). The
+Last updated: 2026-10-04. Version 0.2.0 (release `game-prototype-v0.2.0`; 0.1.0 shipped with the
+repository's v0.4.0, before the plan-and-phases flow). The
 second plugin of this repository (`packages/opencode-game-prototype`): quick three.js game
 prototypes with a small model, checked in a real browser. [STATUS.md](STATUS.md) is about
 `opencode-unity`.
@@ -15,6 +15,9 @@ prototypes with a small model, checked in a real browser. [STATUS.md](STATUS.md)
 | **`proto_test`** (2026-10-03): runs each phase's keys in the browser, checks every `Expect` line, answers PASSED/FAILED with what was seen instead, writes `Status: passed/failed` next to the phase; the idle gate nudges on a failing phase | Done, verified live and with qwen. Forms: moves (also a direction, back and forth, not at all), jumps N times, rises, falls, is reset, is removed, appears, turns a colour, x/y/z comparisons, ends at (x, y, z), is above/on another object, text contains/is, on/off screen, no errors. Repeated lines and a phase that expects nothing new are flagged |
 | **`proto_lookup`** (2026-10-03): fields and methods of any three.js class, from the shipped build (constructed when possible, read from the source otherwise) | Done, unit-tested. Not yet seen used by a model |
 | Kit misuse found by reading (`keys.isDown`, `game.update`, an import the kit does not have) | Done, unit-tested |
+| **Journal and `SESSION.md`** (2026-10-03): every plan save, blocked write, page check, test play, phase test and lookup is appended to `.proto/journal.jsonl` in the prototype; `proto_export` / `/prototype-export` write `SESSION.md` (plan as it stands, numbers, timeline, phase tests in full); `proto_test` keeps it current. The folder is what a student hands in | Done, verified live and in the browser test. The model's prose and the user's requests are not in it: hooks do not see them |
+| **Kit grown** (2026-10-03): `game.box`/`game.sphere` (named, in the scene), `onTop(a, b)`, `landOn(a, b)`, `follow(camera, target, dx, dy, dz)`; the starter game uses them and the camera follows the player | Done, browser tests pass on the new starter game. **Not shown to help yet**: two platform sessions with the kit ran 86 and 120 minutes without finishing (the model kept trying to land a jump on a moving platform with a fixed key script, a timing problem), against 39 minutes for the run before the kit. Two runs, high variance: inconclusive |
+| Release of this package alone: tag `game-prototype-vX.Y.Z`, never marked latest; the installer finds the newest release carrying its package | Written in `release.yml` and `install-game-prototype.ps1`; first used for game-prototype-v0.2.0 (2026-10-04) |
 | Test play report (2026-10-03): a timeline per object (when it moved, fell, stopped, was reset), colour changes, objects grouped by name, the time the text on screen changed | Done, verified on qwen's own prototypes |
 | Local server (`node:http`, 127.0.0.1, port 4317 or a free one), serving prototypes only, probe added to the page | Done, verified on Bun and on Node 24 |
 | Test browser: Edge or Chrome with no window, one process per run, nothing installed | Done, verified on macOS with Chrome 154 and Edge 154. About 2 s for a page check, 3 to 5 s for a test play. No browser process was left behind after the sessions below |

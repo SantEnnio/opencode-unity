@@ -145,7 +145,7 @@ describe("Expect lines against a recorded play", () => {
   test("the forms added for the platform session: back and forth, falls, reset, ends at, above", () => {
     const trace = (points: [number, number, number, number][]) => points
     const platform = { label: "Platform", start: [0, 0.2, 0] as [number, number, number], end: [1.2, 0.2, 0] as [number, number, number], far: 3.4, rose: 0, added: null, removed: null, onScreen: true, trace: trace([[0, 0, 0.2, 0], [1, 4, 0.2, 0], [2, 1.2, 0.2, 0]]) }
-    const faller = { label: "Player", start: [0, 0.5, 0] as [number, number, number], end: [0, 0.5, 0] as [number, number, number], far: 6, rose: 0, added: null, removed: null, onScreen: true, trace: trace([[0, 0, 0.5, 0], [1, 2, -6, 0], [1.1, 0, 0.5, 0]]) }
+    const faller = { label: "Player", start: [0, 0.5, 0] as [number, number, number], end: [0, 0.5, 0] as [number, number, number], far: 6, rose: 0, added: null, removed: null, onScreen: true, trace: trace([[0, 0, 0.5, 0], [0.9, 2, -5, 0], [1, 2.2, -6, 0], [1.1, 0, 0.5, 0]]) }
     const rider = { ...faller, label: "Rider", end: [1.0, 0.7, 0] as [number, number, number], trace: trace([[0, 0, 0.5, 0], [1, 1, 0.7, 0]]) }
     const outcome: Outcome = { ...coin, run: { ...coin.run, objects: [platform, faller, rider] } }
     expect(check("Platform moves back and forth", outcome)).toBe("yes: Platform went both ways, 3.4 from where it started at most")

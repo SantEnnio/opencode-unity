@@ -91,9 +91,9 @@ export function unknownNames(source: string, exports: Set<string>): { name: stri
 }
 
 // What the kit really has. A model that has seen other engines writes keys.isDown, game.update...
-const KIT_EXPORTS = ["createGame", "keys", "overlap", "hud"]
+const KIT_EXPORTS = ["createGame", "keys", "overlap", "onTop", "landOn", "follow", "hud"]
 const KEYS_MEMBERS = ["down", "pressed"]
-const GAME_MEMBERS = ["scene", "camera", "renderer", "run"]
+const GAME_MEMBERS = ["scene", "camera", "renderer", "box", "sphere", "run"]
 
 export type Mistake = { line: number; text: string; fix: string }
 

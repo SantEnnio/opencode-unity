@@ -58,8 +58,10 @@ export function timeline(track: Track): string | null {
     const [t1, x1, y1, z1] = trace[i]!
     const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0
     const d = Math.hypot(dx, dy, dz)
+    const before = i > 1 ? Math.hypot(x0 - trace[i - 2]![1], y0 - trace[i - 2]![2], z0 - trace[i - 2]![3]) : 0
     let kind = "still"
-    if (d > 2.5) kind = "teleported"
+    // A jump of more than 2.5 in a tenth of a second, and not the next step of a fast steady fall.
+    if (d > 2.5 && d > 2.5 * before) kind = "teleported"
     else if (d >= 0.03) {
       const axis = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz))
       kind = axis === Math.abs(dy) ? (dy > 0 ? "rose" : "fell") : axis === Math.abs(dx) ? (dx > 0 ? "right" : "left") : dz < 0 ? "forward" : "back"
@@ -242,7 +244,9 @@ export function movement(outcome: Outcome): string[] {
   const lines: string[] = []
   const here = run.objects.filter((o) => o.start && o.end)
   const moved = here.filter((o) => o.far >= MOVED && o.added === null).sort((a, b) => b.far - a.far)
-  for (const o of moved.slice(0, 6)) {
+  // A camera that follows the player moves as much as the player: not news, unless it is the only mover.
+  const listed = moved.filter((o) => !o.camera || moved.every((m) => m.camera))
+  for (const o of listed.slice(0, 6)) {
     const ups = o.pushedUp ?? []
     const pushed = ups.length === 0 ? "" : `, pushed upward ${ups.length === 1 ? "once" : `${ups.length} times`} (at ${ups.map(secs).join(", ")})`
     const rose = o.rose >= 0.2 ? `, rose ${num(o.rose)}${pushed}` : ""
@@ -257,7 +261,7 @@ export function movement(outcome: Outcome): string[] {
           : `moved ${num(o.far)}: ${point(o.start!)} → ${point(o.end!)}`
     lines.push(`- ${o.label} ${path}${rose}${gone}`)
   }
-  if (moved.length > 6) lines.push(`- and ${moved.length - 6} more objects moved`)
+  if (listed.length > 6) lines.push(`- and ${listed.length - 6} more objects moved`)
 
   const removed = here.filter((o) => o.removed !== null && o.far < MOVED && o.added === null)
   for (const o of removed.slice(0, 4)) lines.push(`- ${o.label} was removed at ${secs(o.removed!)}`)

@@ -31,14 +31,14 @@ describe.skipIf(!browser || process.env.PROTO_SKIP_LIVE === "1")("in a real brow
   }, 60_000)
 
   test("an edit that breaks the page is caught, explained, and holds the model back", async () => {
-    const report = await edit((source) => source.replace("new THREE.SphereGeometry(0.4)", "new THREE.CubeGeometry(1, 1, 1)"))
+    const report = await edit((source) => source.replace('game.sphere("Coin", 0.4, "gold")', "new THREE.Mesh(new THREE.CubeGeometry(1, 1, 1))"))
     expect(report).toContain('[proto] Page check FAILED: "coin-run" has 1 error.')
-    expect(report).toContain("main.js:18: TypeError: THREE.CubeGeometry is not a constructor\n  FIX: three.js has no CubeGeometry: use THREE.BoxGeometry.")
+    expect(report).toMatch(/main\.js:\d+: TypeError: THREE\.CubeGeometry is not a constructor\n  FIX: three\.js has no CubeGeometry: use THREE\.BoxGeometry\./)
     expect(proto.idle("s")?.text).toContain("You stopped, but the prototype has errors.")
   }, 60_000)
 
   test("the edit that fixes it passes", async () => {
-    expect(await edit((source) => source.replace("new THREE.CubeGeometry(1, 1, 1)", "new THREE.BoxGeometry(1, 1, 1)"))).toMatch(/^\[proto\] Page check passed: "coin-run" loaded and drew \d+ frames with no errors\.$/)
+    expect(await edit((source) => source.replace("new THREE.Mesh(new THREE.CubeGeometry(1, 1, 1))", 'game.sphere("Coin", 0.4, "gold")'))).toMatch(/^\[proto\] Page check passed: "coin-run" loaded and drew \d+ frames with no errors\.$/)
     expect(proto.idle("s")).toBeNull()
   }, 60_000)
 
@@ -49,6 +49,8 @@ describe.skipIf(!browser || process.env.PROTO_SKIP_LIVE === "1")("in a real brow
       .replace("Write here, in two sentences: what the player does, and what this prototype must prove.", "Collect the coin.")
       .replace("### Phase 2: (title)", "### Phase 2: the coin")
       .replace('- Test: keys "..."\n- Expect: ...', '- Test: keys "D 1s"\n- Expect: Coin is removed\n- Expect: text contains "Score 1"\n- Expect: Player y > 3')
+      // Seen with qwen: the player sank 0.3 a second while standing, because Box3 read the matrices of the previous frame.
+      .replace("- Expect: Player jumps\n", "- Expect: Player jumps\n- Expect: Player ends at y = 0.5\n")
     fs.writeFileSync(plan, text)
     const report = await proto.tools.proto_test!.execute({}, context)
     expect(report).toContain('[proto] Tests of "coin-run": 1 of 2 phases pass.')
@@ -58,6 +60,17 @@ describe.skipIf(!browser || process.env.PROTO_SKIP_LIVE === "1")("in a real brow
     const statuses = fs.readFileSync(plan, "utf8").split("\n").filter((line) => line.startsWith("- Status:"))
     expect(statuses).toEqual(["- Status: passed", "- Status: failed"])
     expect(proto.idle("s")?.text).toContain("a phase of the prototype still fails its test")
+
+    // The journal and SESSION.md travel with the folder.
+    const session = fs.readFileSync(path.join(dir, "coin-run", "SESSION.md"), "utf8")
+    expect(session).toContain("# coin-run: session report")
+    expect(session).toContain("- Phase tests: 1 run, 0 fully passed")
+    expect(session).toMatch(/- \d\d:\d\d:\d\d edit main.js: check FAILED — main.js:\d+: TypeError: THREE.CubeGeometry is not a constructor/)
+    expect(session).toMatch(/- \d\d:\d\d:\d\d test all phases: 1\/2 passed — Player y > 3: NO. Player ended at y 0.5/)
+    expect(fs.readFileSync(path.join(dir, "coin-run", ".proto", "journal.jsonl"), "utf8").split("\n").filter(Boolean).length).toBeGreaterThanOrEqual(5)
+    const exported = await proto.tools.proto_export!.execute({}, context)
+    expect(exported).toContain("[proto] Report written: coin-run/SESSION.md")
+    expect(proto.guardWrite("edit", { filePath: path.join(dir, "coin-run", "SESSION.md") }, dir)).toContain("the plugin's own record")
 
     const one = await proto.tools.proto_test!.execute({ phase: "1" }, context)
     expect(one).toContain('[proto] Tests of "coin-run": 1 of 1 phase pass.\nPhase 1 (the player moves and jumps): PASSED\n→ Next: go on to the next phase of PLAN.md.')

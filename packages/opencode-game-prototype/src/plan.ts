@@ -231,7 +231,10 @@ const teleported = (track: Track) => {
   for (let i = 1; i < trace.length; i++) {
     const [t0, x0, y0, z0] = trace[i - 1]!
     const [t, x1, y1, z1] = trace[i]!
-    if (t - t0 <= 0.3 && Math.hypot(x1 - x0, y1 - y0, z1 - z0) > 2.5) return t
+    const d = Math.hypot(x1 - x0, y1 - y0, z1 - z0)
+    const before = i > 1 ? Math.hypot(x0 - trace[i - 2]![1], y0 - trace[i - 2]![2], z0 - trace[i - 2]![3]) : 0
+    // Not the next step of a fast steady fall: a break from what came before.
+    if (t - t0 <= 0.3 && d > 2.5 && d > 2.5 * before) return t
   }
   return null
 }

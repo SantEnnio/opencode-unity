@@ -6,7 +6,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { toJsonSchema } from "../../opencode-unity/src/args.ts"
-import { createPrototypes, type Log, PROTO_COMMAND } from "./core.ts"
+import { createPrototypes, type Log, PROTO_COMMANDS } from "./core.ts"
 
 type Content = string | ReadonlyArray<{ type: string; text?: string }>
 type ToolResult = { content?: Content; output?: unknown; metadata?: Record<string, unknown> }
@@ -108,7 +108,7 @@ export async function setup(ctx: V2Context) {
 
   disposables.push(
     await ctx.tool.hook("execute.before", (event) => {
-      const blocked = proto.guardWrite(event.tool, event.input, directory)
+      const blocked = proto.guardWrite(event.tool, event.input, directory, event.sessionID)
       if (!blocked) return
       event.tool = BLOCKED_TOOL
       event.input = { reason: blocked }
@@ -156,13 +156,15 @@ export async function setup(ctx: V2Context) {
   )
 
   disposables.push(
-    await ctx.command.transform((editor) =>
-      editor.add({
-        name: PROTO_COMMAND.name,
-        description: PROTO_COMMAND.description,
-        execute: async ({ sessionID, delivery }) => void (await ctx.session.prompt({ sessionID, text: PROTO_COMMAND.template, delivery })),
-      }),
-    ),
+    await ctx.command.transform((editor) => {
+      for (const command of PROTO_COMMANDS) {
+        editor.add({
+          name: command.name,
+          description: command.description,
+          execute: async ({ sessionID, delivery }) => void (await ctx.session.prompt({ sessionID, text: command.template, delivery })),
+        })
+      }
+    }),
   )
 
   const agent = proto.agent
