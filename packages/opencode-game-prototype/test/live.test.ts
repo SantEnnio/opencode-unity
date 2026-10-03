@@ -40,6 +40,28 @@ describe.skipIf(!browser || process.env.PROTO_SKIP_LIVE === "1")("in a real brow
   test("the edit that fixes it passes", async () => {
     expect(await edit((source) => source.replace("new THREE.CubeGeometry(1, 1, 1)", "new THREE.BoxGeometry(1, 1, 1)"))).toMatch(/^\[proto\] Page check passed: "coin-run" loaded and drew \d+ frames with no errors\.$/)
     expect(proto.idle("s")).toBeNull()
-    await proto.dispose()
   }, 60_000)
+
+  test("proto_test runs the plan's phases, says what failed and what was seen, and writes the result into PLAN.md", async () => {
+    const plan = path.join(dir, "coin-run", "PLAN.md")
+    const text = fs
+      .readFileSync(plan, "utf8")
+      .replace("Write here, in two sentences: what the player does, and what this prototype must prove.", "Collect the coin.")
+      .replace("### Phase 2: (title)", "### Phase 2: the coin")
+      .replace('- Test: keys "..."\n- Expect: ...', '- Test: keys "D 1s"\n- Expect: Coin is removed\n- Expect: text contains "Score 1"\n- Expect: Player y > 3')
+    fs.writeFileSync(plan, text)
+    const report = await proto.tools.proto_test!.execute({}, context)
+    expect(report).toContain('[proto] Tests of "coin-run": 1 of 2 phases pass.')
+    expect(report).toContain("Phase 1 (the player moves and jumps): PASSED")
+    expect(report).toContain("Phase 2 (the coin): FAILED\n- Coin is removed: yes\n- text contains \"Score 1\": yes\n- Player y > 3: NO. Player ended at y 0.5\nSeen:\n  - Player moved")
+    expect(report.split("\n").at(-1)).toBe('→ Next: make phase 2 pass: change the code, then call proto_test with phase "2".')
+    const statuses = fs.readFileSync(plan, "utf8").split("\n").filter((line) => line.startsWith("- Status:"))
+    expect(statuses).toEqual(["- Status: passed", "- Status: failed"])
+    expect(proto.idle("s")?.text).toContain("a phase of the prototype still fails its test")
+
+    const one = await proto.tools.proto_test!.execute({ phase: "1" }, context)
+    expect(one).toContain('[proto] Tests of "coin-run": 1 of 1 phase pass.\nPhase 1 (the player moves and jumps): PASSED\n→ Next: go on to the next phase of PLAN.md.')
+    expect(await proto.tools.proto_test!.execute({ phase: "7" }, context)).toContain("[proto] No phase '7' in PLAN.md. The phases are: 1 (the player moves and jumps), 2 (the coin).")
+    await proto.dispose()
+  }, 120_000)
 })

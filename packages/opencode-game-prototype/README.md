@@ -10,20 +10,26 @@ page for it, presses the keys, and puts what happened in the result of the edit 
 It is a separate plugin from `opencode-unity` and works in any folder. Inside a Unity or Unreal
 project the prototypes go in `.prototypes/<name>/` at the project root, out of the engine's way.
 
-## What it does
+## The flow
 
-- **`proto_new`** creates a prototype that already runs: a page, a starter game (`main.js`) and a
-  fixed `vendor/` folder with three.js and a small kit (game loop, keyboard, overlap test, text on
-  screen). No npm, no build step, no network: three.js is copied from the plugin.
-- **Every edit of a prototype file is loaded in a browser.** The result of the edit carries a
-  `[proto]` report: passed, or the errors with file and line, and a `FIX:` line when the plugin
-  knows the answer (a three.js name that does not exist, an import that cannot resolve, a file
-  that is missing).
-- **`proto_play`** runs the game for a few seconds, optionally pressing keys (`"D 1s; Space"`), and
-  reports what moved and how far, what appeared or was removed, the text on screen, and whether
-  anything is visible at all.
-- **`game-prototyper`** agent, a short rules block, `/prototype` for the status, an idle gate that
-  sends the model back when it stops on a page with errors, and a guard on `vendor/`.
+1. **Plan.** `proto_new` creates a prototype that already runs (a page, a starter game in
+   `main.js`, a fixed `vendor/` with three.js and a small kit) and a `PLAN.md`. The model writes
+   the plan: the idea, then phases, each with a `Test` line (the keys to press) and `Expect` lines
+   (what must be true afterwards, in a dozen plain-English forms listed in the file). The code
+   stays locked until the plan is written.
+2. **Build, one phase at a time.** Every edit of a prototype file is loaded in a real browser,
+   and the result of the edit carries a `[proto]` report: passed, or the errors with file and
+   line and a `FIX:` line when the plugin knows the answer (a three.js or kit name that does not
+   exist, an import that cannot resolve, a missing file).
+3. **Test and evaluate.** `proto_test` presses each phase's keys in the browser, checks every
+   `Expect` line, and answers PASSED or FAILED with what was seen instead (where objects went and
+   when, jumps counted, what appeared or was removed, the text on screen). It writes the result
+   next to the phase in `PLAN.md`. The idle gate sends the model back when it stops with a phase
+   still failing.
+
+Also: `proto_play` for a free test play with keys, `proto_lookup` for the fields and methods of
+any three.js class in the shipped version, `proto_status` and `/prototype`, the `game-prototyper`
+agent and a short rules block, a guard on `vendor/`.
 
 ## How the page is tested
 
@@ -70,6 +76,7 @@ project:
 | Option | Default | |
 |---|---|---|
 | `checkOnEdit` | `true` | Load the page in a browser after every edit of a prototype file |
+| `planFirst` | `true` | Refuse changes to the code until `PLAN.md` has the idea and a phase with a test |
 | `idleGate` | `true` | Send the model back when it stops on a page with errors |
 | `idleGateRetries` | `2` | How many times in a row |
 | `rules` | `true` | Add the rules block to the system prompt |

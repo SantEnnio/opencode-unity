@@ -6,6 +6,19 @@
   window.__protoProbe = true
 
   const runId = new URLSearchParams(location.search).get("__run")
+
+  // A test play gets the same random numbers every time: a test that passes keeps passing, and a
+  // model does not chase a value that moved because an enemy spawned somewhere else. Seen with
+  // qwen: it moved the spawns onto the player to make a collision test deterministic.
+  if (runId) {
+    let seed = 0x9e3779b9
+    Math.random = () => {
+      seed = (seed + 0x6d2b79f5) | 0
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+  }
   const base = location.pathname.replace(/[^/]*$/, "")
   const page = base.split("/")[1] || ""
   const t0 = performance.now()
@@ -166,6 +179,15 @@
   // During a test play every drawn frame is sampled: the top of a jump falls between timer ticks.
   let sampling = false
 
+  const MAX_TRACE = 120
+
+  // The colour of a mesh's material as six hex digits, or null when it has none.
+  function colorOf(object) {
+    const material = Array.isArray(object.material) ? object.material[0] : object.material
+    const color = material && material.color
+    return color && typeof color.getHexString === "function" ? color.getHexString() : null
+  }
+
   const labelOf = (object) => object.name || (object.geometry ? `${object.type}(${object.geometry.type})` : object.type)
 
   // Tracked: what sits directly in the scene, and anything deeper that was given a name. Unnamed
@@ -223,7 +245,7 @@
       let track = tracks.get(object)
       if (!track) {
         if (tracks.size >= MAX_TRACKS) return
-        track = { label: labelOf(object), start: null, end: null, far: 0, rose: 0, pushedUp: [], added: firstSample ? null : time, removed: null, onScreen: null }
+        track = { label: labelOf(object), start: null, end: null, far: 0, rose: 0, pushedUp: [], added: firstSample ? null : time, removed: null, onScreen: null, trace: [], color: null, colorChanged: null }
         tracks.set(object, track)
       }
       const point = position(object)
@@ -231,6 +253,17 @@
       if (!track.start) track.start = at
       track.end = at
       track.removed = null
+      // Where it was, ten times a second: enough for a timeline, small enough to send.
+      const lastPoint = track.trace[track.trace.length - 1]
+      if (track.trace.length < MAX_TRACE && (!lastPoint || time - lastPoint[0] >= 0.1)) track.trace.push([time, at[0], at[1], at[2]])
+      const color = colorOf(object)
+      if (color !== null) {
+        if (track.color === null) track.color = [color, color]
+        else if (track.color[1] !== color) {
+          track.color[1] = color
+          track.colorChanged = time
+        }
+      }
       const change = vertical(object, at[1])
       if (sampling && change && change.speed > 1 && change.gain > 2 && track.pushedUp.length < 8) track.pushedUp.push(time)
       track.far = Math.max(track.far, Math.hypot(at[0] - track.start[0], at[1] - track.start[1], at[2] - track.start[2]))
@@ -340,6 +373,8 @@
         events: [...events.values()].map((event) => ({ ...event, first: sincePlay(event.first) })),
         objects: [...tracks.values()].map((track) => ({
           ...track,
+          trace: (track.trace || []).map(([t, x, y, z]) => [sincePlay(t), x, y, z]),
+          colorChanged: track.colorChanged === null || track.colorChanged === undefined ? null : sincePlay(track.colorChanged),
           pushedUp: (track.pushedUp || []).map(sincePlay),
           added: track.added === null ? null : sincePlay(track.added),
           removed: track.removed === null ? null : sincePlay(track.removed),

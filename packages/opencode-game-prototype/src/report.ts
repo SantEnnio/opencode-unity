@@ -18,6 +18,68 @@ export type Track = {
   removed: number | null
   onScreen: boolean | null
   camera?: boolean
+  /** Where it was, about ten times a second: [seconds, x, y, z] */
+  trace?: [number, number, number, number][]
+  /** Material colour at the start and at the end, six hex digits, and when it last changed */
+  color?: [string, string] | null
+  colorChanged?: number | null
+}
+
+const COLORS: [string, number, number, number][] = [
+  ["black", 0, 0, 0], ["white", 255, 255, 255], ["gray", 128, 128, 128], ["red", 255, 0, 0], ["orange", 255, 136, 0], ["yellow", 255, 221, 0],
+  ["green", 0, 160, 0], ["cyan", 0, 220, 220], ["blue", 0, 0, 255], ["purple", 140, 0, 200], ["pink", 255, 105, 180], ["brown", 120, 70, 20],
+]
+
+/** "ff8800" -> "orange": the nearest of a dozen names, which is what a model asked for. */
+export function colorName(hex: string): string {
+  const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16)
+  if ([r, g, b].some(Number.isNaN)) return `#${hex}`
+  let best = COLORS[0]!
+  let bestDistance = Infinity
+  for (const candidate of COLORS) {
+    const d = (candidate[1] - r) ** 2 + (candidate[2] - g) ** 2 + (candidate[3] - b) ** 2
+    if (d < bestDistance) [best, bestDistance] = [candidate, d]
+  }
+  return best[0]
+}
+
+type Segment = { from: number; to: number; kind: string; end: Point }
+
+/**
+ * What one object did, as a few segments: "0.0–0.5 s right to (…); 0.5–0.9 s fell to (…); 0.9 s
+ * teleported to (…); 0.9–4.3 s still". The one thing a list of positions cannot say is when.
+ */
+export function timeline(track: Track): string | null {
+  const trace = track.trace ?? []
+  if (trace.length < 3) return null
+  const segments: Segment[] = []
+  for (let i = 1; i < trace.length; i++) {
+    const [t0, x0, y0, z0] = trace[i - 1]!
+    const [t1, x1, y1, z1] = trace[i]!
+    const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0
+    const d = Math.hypot(dx, dy, dz)
+    let kind = "still"
+    if (d > 2.5) kind = "teleported"
+    else if (d >= 0.03) {
+      const axis = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz))
+      kind = axis === Math.abs(dy) ? (dy > 0 ? "rose" : "fell") : axis === Math.abs(dx) ? (dx > 0 ? "right" : "left") : dz < 0 ? "forward" : "back"
+    }
+    const last = segments[segments.length - 1]
+    if (last && last.kind === kind && kind !== "teleported") {
+      last.to = t1
+      last.end = [x1, y1, z1]
+    } else segments.push({ from: t0, to: t1, kind, end: [x1, y1, z1] })
+  }
+  // A flicker of stillness between two moves is not worth a segment.
+  const kept = segments.filter((s, i) => !(s.kind === "still" && s.to - s.from < 0.25 && i > 0 && i < segments.length - 1))
+  const shown = kept.slice(0, 7)
+  const text = shown.map((s) => {
+    const when = s.kind === "teleported" ? secs(s.to) : `${num(s.from)}–${secs(s.to)}`
+    if (s.kind === "still") return `${when} still`
+    return `${when} ${s.kind} to ${point(s.end)}`
+  })
+  if (kept.length > shown.length) text.push(`and ${kept.length - shown.length} more`)
+  return `- ${track.label} over time: ${text.join("; ")}`
 }
 
 export type PageRun = {
@@ -53,6 +115,8 @@ export type Outcome = {
   ranIn: "headless" | "tab"
   /** three.js names the prototype's files use that do not exist: found by reading, not by running */
   unknown?: { file: string; line: number; name: string; instead: string }[]
+  /** Uses of the kit that do not exist, found the same way */
+  mistakes?: { file: string; line: number; text: string; fix: string }[]
   /** The known fix for an error message, when there is one */
   fixFor?: (text: string) => string | null
 }
@@ -91,6 +155,12 @@ export function problems(outcome: Outcome): Problem[] {
     const where = `${u.file}:${u.line}`
     if (reported.has(where)) continue
     found.push({ text: `${where}: THREE.${u.name} does not exist`, where, fix: `three.js has no ${u.name}: ${u.instead}.` })
+  }
+  for (const m of outcome.mistakes ?? []) {
+    const where = `${m.file}:${m.line}`
+    if (reported.has(where)) continue
+    reported.add(where)
+    found.push({ text: `${where}: ${m.text}`, where, fix: m.fix })
   }
   return found
 }
@@ -167,7 +237,7 @@ export function checkReport(name: string, outcome: Outcome): { failing: boolean;
   return { failing: false, report: lines.join("\n") }
 }
 
-function movement(outcome: Outcome): string[] {
+export function movement(outcome: Outcome): string[] {
   const { run } = outcome
   const lines: string[] = []
   const here = run.objects.filter((o) => o.start && o.end)
@@ -210,6 +280,19 @@ function movement(outcome: Outcome): string[] {
   }
   if (groups.size > 4) lines.push(`- and ${groups.size - 4} more kinds of objects appeared`)
 
+  const recolored = here.filter((o) => o.colorChanged !== null && o.colorChanged !== undefined && o.color && o.color[0] !== o.color[1])
+  for (const o of recolored.slice(0, 4)) {
+    const [before, after] = [colorName(o.color![0]), colorName(o.color![1])]
+    lines.push(before === after ? `- ${o.label} changed colour at ${secs(o.colorChanged!)}: #${o.color![0]} → #${o.color![1]} (both ${after})` : `- ${o.label} turned ${after} at ${secs(o.colorChanged!)} (was ${before})`)
+  }
+  if (recolored.length > 4) lines.push(`- and ${recolored.length - 4} more changed colour`)
+
+  // The two objects that moved most get their timeline: when they moved, fell, stopped, were reset.
+  for (const o of moved.filter((o) => !o.camera && o.far >= 0.5).slice(0, 2)) {
+    const line = timeline(o)
+    if (line) lines.push(line)
+  }
+
   if (run.hud[0] !== run.hud[1]) lines.push(`- Text on screen: "${run.hud[0]}" → "${run.hud[1]}"${typeof run.hudChanged === "number" ? ` (at ${secs(run.hudChanged)})` : ""}`)
   else if (run.hud[1]) lines.push(`- Text on screen: "${run.hud[1]}" (did not change)`)
 
@@ -218,8 +301,11 @@ function movement(outcome: Outcome): string[] {
     // Which object the keys should move is unknown: only "nothing moved at all" is a finding.
     lines.unshift(outcome.held >= 0.5 ? `- Keys were held for ${secs(outcome.held)} and nothing moved.` : "- Nothing moved.")
   } else if (still.length > 0) {
-    const names = still.slice(0, 5).map((o) => o.label).join(", ")
-    lines.push(`- Did not move: ${names}${still.length > 5 ? `, and ${still.length - 5} more` : ""}`)
+    // Two objects named Ground are "Ground ×2", not "Ground, Ground".
+    const counts = new Map<string, number>()
+    for (const o of still) counts.set(o.label, (counts.get(o.label) ?? 0) + 1)
+    const names = [...counts].slice(0, 5).map(([label, n]) => (n > 1 ? `${label} ×${n}` : label)).join(", ")
+    lines.push(`- Did not move: ${names}${counts.size > 5 ? `, and ${counts.size - 5} more` : ""}`)
   }
   return lines
 }

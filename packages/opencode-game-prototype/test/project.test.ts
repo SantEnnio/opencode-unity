@@ -105,7 +105,8 @@ describe("core, without a browser", () => {
     const proto = core(dir)
     const created = await proto.tools.proto_new!.execute({ name: "Double Jump" }, context(dir))
     expect(created).toContain('[proto] Created "double-jump" in double-jump (three.js r186).')
-    expect(created.split("\n").at(-1)).toBe("→ Next: read double-jump/main.js, then change it one small step at a time.")
+    expect(created.split("\n").at(-1)).toBe("→ Next: read double-jump/main.js, then write double-jump/PLAN.md: the idea, and the phases with their Test and Expect lines. double-jump/main.js cannot be changed before that.")
+    expect(fs.existsSync(path.join(dir, "double-jump", "PLAN.md"))).toBe(true)
     expect(await proto.tools.proto_new!.execute({ name: "double-jump" }, context(dir))).toContain('"double-jump" already exists: nothing was created.')
     fs.mkdirSync(path.join(dir, "docs"))
     expect(await proto.tools.proto_new!.execute({ name: "docs" }, context(dir))).toContain("already exists and it is not a prototype")
@@ -123,14 +124,30 @@ describe("core, without a browser", () => {
     await proto.dispose()
   })
 
-  test("writes into vendor/ are refused, others are not", async () => {
+  test("writes into vendor/ are refused; the code is locked until the plan is written", async () => {
     const dir = temp()
     const proto = core(dir)
     await proto.tools.proto_new!.execute({ name: "a" }, context(dir))
     expect(proto.guardWrite("edit", { filePath: path.join(dir, "a", "vendor", "kit.js") }, dir)).toContain("[proto] Blocked: vendor/kit.js")
     expect(proto.guardWrite("write", { path: "a/vendor/three.module.js" }, dir)).toContain("Blocked")
-    expect(proto.guardWrite("edit", { filePath: path.join(dir, "a", "main.js") }, dir)).toBeNull()
     expect(proto.guardWrite("edit", { filePath: path.join(dir, "vendor", "x.js") }, dir)).toBeNull()
+
+    const main = path.join(dir, "a", "main.js")
+    const plan = path.join(dir, "a", "PLAN.md")
+    expect(proto.guardWrite("edit", { filePath: main }, dir)).toBe(
+      "[proto] Blocked: write a/PLAN.md first. the Idea section is still the placeholder: write what the player does and what the prototype must prove; Phase 2 has no Test line (for example: - Test: keys \"D 1s; Space\"); Phase 2 has no Expect line. Then change main.js.",
+    )
+    expect(proto.guardWrite("edit", { filePath: plan }, dir)).toBeNull()
+    // The plan as a model writes it: idea filled in, the sample phase kept, one phase of its own.
+    fs.writeFileSync(plan, fs.readFileSync(plan, "utf8").replace("Write here, in two sentences: what the player does, and what this prototype must prove.", "The player double-jumps."))
+    expect(await proto.afterWrite("write", { filePath: plan }, "s", dir)).toContain("[proto] Plan not ready: a/PLAN.md cannot be used yet.\n- Phase 2 has no Test line")
+    fs.writeFileSync(plan, fs.readFileSync(plan, "utf8").replace('- Test: keys "..."\n- Expect: ...', '- Test: keys "Space; Space"\n- Expect: Player jumps 2 times\n- Expect: Player flies'))
+    const feedback = await proto.afterWrite("write", { filePath: plan }, "s", dir)
+    expect(feedback).toContain("[proto] Plan read: 2 of 2 phases have a test the plugin can run.")
+    expect(feedback).toContain('- Phase 2: Expect "Player flies" is not a form the plugin can check\n- Expect lines are English, one per line, in exactly these forms')
+    expect(feedback).toContain('→ Next: build phase 1 (the player moves and jumps): change a/main.js, then call proto_test with phase "1".')
+    expect(proto.guardWrite("edit", { filePath: main }, dir)).toBeNull()
+    expect(core(dir, { planFirst: false }).guardWrite("edit", { filePath: main }, dir)).toBeNull()
     await proto.dispose()
   })
 

@@ -61,9 +61,15 @@ export function instead(name: string, exports: Set<string>): string {
   const plain = name.replace(/BufferGeometry$/, "Geometry")
   if (plain !== name && exports.has(plain)) return `use THREE.${plain}`
   const lower = name.toLowerCase()
+  // A typo (one or two letters off) beats a name that merely contains the word.
   const close = [...exports]
-    .map((candidate) => ({ candidate, score: candidate.toLowerCase() === lower ? -1 : candidate.toLowerCase().includes(lower) || lower.includes(candidate.toLowerCase()) ? 1 : distance(lower, candidate.toLowerCase()) }))
-    .filter((c) => c.score <= Math.max(2, Math.floor(name.length / 3)))
+    .map((candidate) => {
+      const other = candidate.toLowerCase()
+      const typo = distance(lower, other)
+      const score = other === lower ? -1 : typo <= 2 ? typo : other.includes(lower) || lower.includes(other) ? 3 : typo
+      return { candidate, score }
+    })
+    .filter((c) => c.score <= Math.max(3, Math.floor(name.length / 3)))
     .sort((a, b) => a.score - b.score || a.candidate.length - b.candidate.length)
     .slice(0, 3)
     .map((c) => `THREE.${c.candidate}`)
@@ -82,6 +88,40 @@ export function unknownNames(source: string, exports: Set<string>): { name: stri
     }
   })
   return [...found].map(([name, line]) => ({ name, line }))
+}
+
+// What the kit really has. A model that has seen other engines writes keys.isDown, game.update...
+const KIT_EXPORTS = ["createGame", "keys", "overlap", "hud"]
+const KEYS_MEMBERS = ["down", "pressed"]
+const GAME_MEMBERS = ["scene", "camera", "renderer", "run"]
+
+export type Mistake = { line: number; text: string; fix: string }
+
+/** Uses of the kit that do not exist, found by reading a script. */
+export function kitMistakes(source: string): Mistake[] {
+  const found: Mistake[] = []
+  const lines = source.split(/\r?\n/)
+  const game = /(?:const|let|var)\s+(\w+)\s*=\s*createGame\s*\(/.exec(source)?.[1]
+  lines.forEach((text, index) => {
+    if (/^\s*(\/\/|\*)/.test(text)) return
+    const line = index + 1
+    const imported = /import\s*\{([^}]*)\}\s*from\s*["']kit["']/.exec(text)
+    if (imported) {
+      for (const item of imported[1]!.split(",")) {
+        const name = item.trim().split(/\s+as\s+/)[0]!
+        if (name && !KIT_EXPORTS.includes(name)) found.push({ line, text: `the kit has no ${name}`, fix: `the kit exports ${KIT_EXPORTS.join(", ")}; write the rest yourself in main.js.` })
+      }
+    }
+    for (const match of text.matchAll(/\bkeys\.(\w+)/g)) {
+      if (!KEYS_MEMBERS.includes(match[1]!)) found.push({ line, text: `keys.${match[1]} does not exist`, fix: 'keys has only down("KeyW") (held) and pressed("Space") (went down this frame).' })
+    }
+    if (game) {
+      for (const match of text.matchAll(new RegExp(`\\b${game}\\.(\\w+)`, "g"))) {
+        if (!GAME_MEMBERS.includes(match[1]!)) found.push({ line, text: `${game}.${match[1]} does not exist`, fix: `createGame() gives ${GAME_MEMBERS.join(", ")} only. The loop is ${game}.run((dt) => { ... }).` })
+      }
+    }
+  })
+  return found
 }
 
 /** The fix for an error message the browser gave, when the plugin knows one. */

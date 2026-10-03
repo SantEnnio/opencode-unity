@@ -9,6 +9,8 @@ export type PrototypeOptions = {
   idleGate?: boolean
   /** How many times in a row the idle gate may push the model (default 2) */
   idleGateRetries?: number
+  /** Refuse changes to a prototype's code until its PLAN.md has the idea and a phase with a test (default true) */
+  planFirst?: boolean
   /** Add the short rules block to the system prompt (default true) */
   rules?: boolean
   /** Register the `game-prototyper` agent (default true) */

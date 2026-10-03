@@ -106,8 +106,10 @@ export function createPrototype(root: string, name: string): Prototype {
   const dir = path.join(root, name)
   fs.mkdirSync(root, { recursive: true })
   fs.cpSync(path.join(assets, "template"), dir, { recursive: true })
-  const index = path.join(dir, "index.html")
-  fs.writeFileSync(index, fs.readFileSync(index, "utf8").replace("__NAME__", name))
+  for (const file of ["index.html", "PLAN.md"]) {
+    const target = path.join(dir, file)
+    fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("__NAME__", name))
+  }
   for (const file of THREE_FILES) fs.copyFileSync(path.join(three.dir, file), path.join(dir, "vendor", file))
   const license = [path.join(three.dir, "LICENSE"), path.join(three.dir, "..", "LICENSE")].find((file) => fs.existsSync(file))
   if (license) fs.copyFileSync(license, path.join(dir, "vendor", "three.LICENSE"))

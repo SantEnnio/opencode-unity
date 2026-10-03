@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fs from "node:fs"
 import path from "node:path"
-import { fixFor, instead, threeExports, unknownNames } from "../src/api.ts"
+import { fixFor, instead, kitMistakes, threeExports, unknownNames } from "../src/api.ts"
 import { checkReport, type Outcome, playReport } from "../src/report.ts"
 
 // Recorded from headless Chrome running the template (three.js r186), unchanged or broken in one line.
@@ -143,6 +143,17 @@ describe("three.js names", () => {
     expect(instead("SphereBufferGeometry", exports)).toBe("use THREE.SphereGeometry")
     expect(instead("MeshToonyMaterial", exports)).toContain("THREE.MeshToonMaterial")
     expect(instead("Rigidbody", exports)).toBe("it is not part of three.js")
+  })
+
+  test("uses of the kit that do not exist", () => {
+    const source = ['import { createGame, keys, overlap, hud, physics } from "kit"', "const game = createGame()", 'if (keys.isDown("KeyW")) game.update()', "game.run((dt) => {})", '// keys.held("KeyA")'].join("\n")
+    expect(kitMistakes(source)).toEqual([
+      { line: 1, text: "the kit has no physics", fix: "the kit exports createGame, keys, overlap, hud; write the rest yourself in main.js." },
+      { line: 3, text: "keys.isDown does not exist", fix: 'keys has only down("KeyW") (held) and pressed("Space") (went down this frame).' },
+      { line: 3, text: "game.update does not exist", fix: "createGame() gives scene, camera, renderer, run only. The loop is game.run((dt) => { ... })." },
+    ])
+    const report = checkReport("coin-run", { ...fixture("check-ok"), mistakes: kitMistakes(source).map((m) => ({ file: "main.js", ...m })) }).report
+    expect(report).toContain("- main.js:3: keys.isDown does not exist\n  FIX: keys has only down")
   })
 
   test("known error messages get a fix", () => {

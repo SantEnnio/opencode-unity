@@ -6,12 +6,14 @@ import path from "node:path"
 import pluginPackage from "../package.json" with { type: "json" }
 import { arg, defineTool, optional, type ToolSpec } from "../../opencode-unity/src/args.ts"
 import { writtenPaths } from "../../opencode-unity/src/written-paths.ts"
-import { fixFor, instead, threeExports, unknownNames } from "./api.ts"
+import { fixFor, instead, kitMistakes, threeExports, unknownNames } from "./api.ts"
 import { findBrowser, launchHeadless } from "./browser.ts"
 import { parseWebKeys } from "./keys.ts"
+import { createLookup } from "./lookup.ts"
 import { loadOptions } from "./options.ts"
+import { checkExpectation, markStatus, parsePlan, type Phase, PLAN_FILE, planProblems, planReady, runnable, withForms } from "./plan.ts"
 import { assetsDir, cleanName, createPrototype, listPrototypes, place, type Prototype, prototypeOf, revision, threeSource } from "./project.ts"
-import { checkReport, type Outcome, playReport, tabNote } from "./report.ts"
+import { checkReport, movement, type Outcome, playReport, problems, tabNote } from "./report.ts"
 import { AGENT_PROMPT, renderRules } from "./rules.ts"
 import { createServer } from "./server.ts"
 
@@ -91,25 +93,34 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
   const address = (port: number, name: string) => `http://127.0.0.1:${port}/${name}/`
 
   const exports = threeExports(three.dir)
+  const lookup = createLookup(three.dir, threeRevision)
   const testBrowser = () => (options.headless === false ? null : findBrowser(options.browserPath))
 
-  /** three.js names in the prototype's own scripts that this version does not have. */
-  function wrongNames(prototype: Prototype): NonNullable<Outcome["unknown"]> {
-    let files: string[]
+  const readText = (file: string): string | null => {
+    try {
+      return fs.readFileSync(file, "utf8")
+    } catch {
+      return null
+    }
+  }
+  const problemsOf = (outcome: Outcome) => problems(outcome).map((p) => `${p.text}${p.fix ? `. FIX: ${p.fix}` : ""}`)
+
+  /** three.js names this version does not have, and uses of the kit that do not exist, in the prototype's own scripts. */
+  function wrongNames(prototype: Prototype): { unknown: NonNullable<Outcome["unknown"]>; mistakes: NonNullable<Outcome["mistakes"]> } {
+    const unknown: NonNullable<Outcome["unknown"]> = []
+    const mistakes: NonNullable<Outcome["mistakes"]> = []
+    let files: string[] = []
     try {
       files = fs.readdirSync(prototype.dir).filter((file) => /\.m?js$/.test(file))
     } catch {
-      return []
+      // unreadable: nothing to say
     }
-    return files.flatMap((file) => {
-      let source = ""
-      try {
-        source = fs.readFileSync(path.join(prototype.dir, file), "utf8")
-      } catch {
-        // gone in the meantime
-      }
-      return unknownNames(source, exports).map((u) => ({ file, line: u.line, name: u.name, instead: instead(u.name, exports) }))
-    })
+    for (const file of files) {
+      const source = readText(path.join(prototype.dir, file)) ?? ""
+      unknown.push(...unknownNames(source, exports).map((u) => ({ file, line: u.line, name: u.name, instead: instead(u.name, exports) })))
+      mistakes.push(...kitMistakes(source).map((m) => ({ file, ...m })))
+    }
+    return { unknown, mistakes }
   }
 
   // One page at a time: two browsers at once would fight over the machine and blur the timing.
@@ -148,7 +159,8 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
       keys: script?.text ?? null,
       held: script?.held ?? 0,
       ranIn,
-      unknown: wrongNames(prototype),
+      unknown: wrongNames(prototype).unknown,
+      mistakes: wrongNames(prototype).mistakes,
       fixFor: (text) => fixFor(text, exports),
     })
 
@@ -214,11 +226,12 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
         createPrototype(where.root, name)
         session(context.sessionID).current = name
         const port = await server.start()
+        const plan = shown(path.join(dir, PLAN_FILE), context.directory)
         return [
           `[proto] Created "${name}" in ${shown(dir, context.directory)} (three.js ${threeRevision}).`,
           "It already runs: a Player box moves with W A S D and jumps with Space, and touching the Coin adds to the score.",
           `The user can watch it at ${address(port, name)} (it reloads on every edit).`,
-          `→ Next: read ${main}, then change it one small step at a time.`,
+          `→ Next: read ${main}, then write ${plan}: the idea, and the phases with their Test and Expect lines. ${main} cannot be changed before that.`,
         ].join("\n")
       },
     }),
@@ -245,6 +258,90 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
       },
     }),
 
+    proto_test: defineTool({
+      description:
+        'Run the tests written in PLAN.md: for each phase, press its Test keys in a real browser and check every Expect line. Reports PASSED or FAILED per phase, with what was seen instead, and writes the result next to the phase. Call it after each change, with the phase you are working on: phase "2".',
+      args: {
+        phase: optional(arg.string('The phase to test, by number: "2". Leave out to test every phase.')),
+        name: optional(arg.string("Folder name of the prototype. Leave out to use the one you are working on.")),
+      },
+      async execute(args, context) {
+        const prototype = pick(context.sessionID, args.name, "proto_test")
+        if (typeof prototype === "string") return prototype
+        const state = session(context.sessionID)
+        state.current = prototype.name
+        const planFile = path.join(prototype.dir, PLAN_FILE)
+        const planText = readText(planFile)
+        if (planText === null) return `[proto] ${shown(planFile, context.directory)} does not exist. Write it: the idea, then phases with a Test line and Expect lines.`
+        const phases = parsePlan(planText).phases
+        let chosen = phases
+        if (args.phase?.trim()) {
+          const wanted = args.phase.trim().toLowerCase()
+          const number = Number(/\d+/.exec(wanted)?.[0])
+          const found = phases.find((p) => p.number === number) ?? phases.find((p) => p.title.toLowerCase().includes(wanted))
+          if (!found) return `[proto] No phase '${args.phase}' in PLAN.md. The phases are: ${phases.map((p) => `${p.number} (${p.title})`).join(", ") || "none"}. Call proto_test again with one of their numbers.`
+          chosen = [found]
+        }
+        const ready = chosen.filter(runnable)
+        if (ready.length === 0) {
+          const why = planProblems(planText).slice(0, 4).map((p) => `- ${p}`)
+          return [`[proto] Nothing to test: ${chosen.length === 1 ? `phase ${chosen[0]!.number}` : "no phase"} has a Test line and Expect lines the plugin can run.`, ...why, `→ Next: fix ${shown(planFile, context.directory)}, then call proto_test again.`].join("\n")
+        }
+
+        const lines: string[] = []
+        const passedPhases = new Set<number>()
+        let text = planText
+        for (const phase of ready) {
+          const script = parseWebKeys(phase.test!)
+          if (typeof script === "string") continue
+          const outcome = await serial(() => playPage(prototype, script, WATCH_SECONDS, context.abort))
+          if (typeof outcome === "string") return outcome
+          const verdicts = phase.expects.map((expect) => checkExpectation(expect, outcome))
+          const errors = problemsOf(outcome)
+          const ok = errors.length === 0 && verdicts.every((v) => v.ok === true)
+          if (ok) passedPhases.add(phase.number)
+          text = markStatus(text, phase.number, ok ? "passed" : "failed")
+          lines.push(`Phase ${phase.number} (${phase.title}): ${ok ? "PASSED" : "FAILED"}`)
+          for (const error of errors.slice(0, 3)) lines.push(`- error: ${error}`)
+          for (const v of verdicts) {
+            if (v.ok === true && !ok) lines.push(`- ${v.expect}: yes`)
+            else if (v.ok === false) lines.push(`- ${v.expect}: NO. ${v.seen}`)
+            else if (v.ok === null) lines.push(`- ${v.expect}: cannot be checked, ${v.seen}`)
+          }
+          if (!ok) {
+            const seen = movement(outcome).slice(0, 6)
+            if (seen.length > 0) lines.push("Seen:", ...seen.map((line) => `  ${line}`))
+          }
+        }
+        try {
+          if (text !== planText) fs.writeFileSync(planFile, text)
+        } catch (error) {
+          log("warn", `PLAN.md not updated: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        const failing = passedPhases.size < ready.length
+        const skipped = chosen.length - ready.length
+        const head = `[proto] Tests of "${prototype.name}": ${passedPhases.size} of ${ready.length} phase${ready.length === 1 ? "" : "s"} pass${skipped > 0 ? ` (${skipped} without a runnable test)` : ""}.`
+        const firstFailed = ready.find((p) => !passedPhases.has(p.number))
+        const next = firstFailed
+          ? `→ Next: make phase ${firstFailed.number} pass: change the code, then call proto_test with phase "${firstFailed.number}".`
+          : chosen.length === phases.length
+            ? "→ Next: every phase passes. Write the numbers that worked in PLAN.md, then stop and summarise."
+            : "→ Next: go on to the next phase of PLAN.md."
+        const report = [head, ...lines, next].join("\n")
+        Object.assign(state, { failing, report })
+        return report
+      },
+    }),
+
+    proto_lookup: defineTool({
+      description:
+        'Look up a three.js class in the exact version of this prototype: its fields and methods, or whether one member exists. Examples: "Mesh", "Vector3.distanceTo", "Object3D.lookAt". Call it before using a three.js method you are not sure about.',
+      args: { name: arg.string('Class, or Class.member, e.g. "Mesh" or "Vector3.distanceTo"') },
+      async execute(args) {
+        return lookup(args.name)
+      },
+    }),
+
     proto_status: defineTool({
       description: "Show whether the opencode-game-prototype plugin is active, which prototypes exist, the address to open each one at, and which browser runs the tests. Return its output to the user unchanged.",
       args: {},
@@ -266,12 +363,23 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
     }),
   }
 
-  /** Refuses writes into vendor/. Returns the reason, or null when the write may go ahead. */
+  /**
+   * Refuses writes into vendor/, and changes to the code before PLAN.md is written. Returns the
+   * reason, or null when the write may go ahead.
+   */
   function guardWrite(toolName: string, args: unknown, directory: string): string | null {
     for (const file of writtenPaths(toolName, args, directory)) {
       const hit = prototypeOf(where.root, file)
-      if (hit?.inside.startsWith("vendor/")) {
+      if (!hit) continue
+      if (hit.inside.startsWith("vendor/")) {
         return `[proto] Blocked: ${hit.inside} is part of three.js and the kit, which are fixed. Write your code in main.js, or in a new .js file next to it that main.js imports.`
+      }
+      if (options.planFirst !== false && hit.inside !== PLAN_FILE && CHECKED.has(path.extname(hit.inside).toLowerCase())) {
+        const plan = readText(path.join(hit.prototype.dir, PLAN_FILE))
+        if (plan !== null && !planReady(plan)) {
+          const why = planProblems(plan).slice(0, 3).join("; ")
+          return `[proto] Blocked: write ${shown(path.join(hit.prototype.dir, PLAN_FILE), directory)} first. ${why}. Then change ${hit.inside}.`
+        }
       }
     }
     return null
@@ -280,9 +388,13 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
   /** After a write to a prototype file: reload the user's tab, load the page in a browser, report. */
   async function afterWrite(toolName: string, args: unknown, sessionID: string, directory: string): Promise<string | null> {
     try {
-      const hit = writtenPaths(toolName, args, directory)
-        .map((file) => prototypeOf(where.root, file))
-        .find((found) => found !== null && CHECKED.has(path.extname(found.inside).toLowerCase()))
+      const written = writtenPaths(toolName, args, directory).map((file) => prototypeOf(where.root, file))
+      const plan = written.find((found) => found?.inside === PLAN_FILE)
+      if (plan) {
+        session(sessionID).current = plan.prototype.name
+        return planFeedback(plan.prototype, directory)
+      }
+      const hit = written.find((found) => found !== null && CHECKED.has(path.extname(found.inside).toLowerCase()))
       if (!hit) return null
       const state = session(sessionID)
       state.current = hit.prototype.name
@@ -297,6 +409,34 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
       log("error", `page check failed: ${error instanceof Error ? error.message : String(error)}`)
       return null
     }
+  }
+
+  /** What the plan still lacks, or the first phase to build. */
+  function planFeedback(prototype: Prototype, directory: string): string {
+    const planFile = path.join(prototype.dir, PLAN_FILE)
+    let text = readText(planFile) ?? ""
+    // A rewrite that dropped the forms section leaves the model with nothing to copy: put it back.
+    const restored = withForms(text)
+    if (restored !== text) {
+      try {
+        fs.writeFileSync(planFile, restored)
+        text = restored
+      } catch {
+        // read-only: the message below still carries the forms
+      }
+    }
+    const phases = parsePlan(text).phases
+    const ready = phases.filter(runnable)
+    const missing = planProblems(text)
+    const main = shown(path.join(prototype.dir, "main.js"), directory)
+    if (!planReady(text)) {
+      return [`[proto] Plan not ready: ${shown(planFile, directory)} cannot be used yet.`, ...missing.slice(0, 5).map((p) => `- ${p}`), `→ Next: fix these in ${shown(planFile, directory)}. ${main} stays locked until then.`].join("\n")
+    }
+    const lines = [`[proto] Plan read: ${ready.length} of ${phases.length} phase${phases.length === 1 ? "" : "s"} have a test the plugin can run.`]
+    for (const p of missing.slice(0, 5)) lines.push(`- ${p}`)
+    const first: Phase | undefined = ready.find((p) => p.status === null || /todo|failed/i.test(p.status))
+    lines.push(first ? `→ Next: build phase ${first.number} (${first.title}): change ${main}, then call proto_test with phase "${first.number}".` : "→ Next: every phase has passed. Write the numbers that worked, then stop and summarise.")
+    return lines.join("\n")
   }
 
   /**
@@ -326,7 +466,8 @@ export function createPrototypes(directory: string, rawOptions: unknown, log: Lo
     const state = sessions.get(sessionID)
     if (!state || !state.failing || state.nudges >= (options.idleGateRetries ?? 2)) return null
     state.nudges++
-    return { text: `You stopped, but the prototype has errors. Fix them now, then stop.\n\n${state.report}`, agent: state.agent, model: state.model }
+    const what = state.report.startsWith("[proto] Tests") ? "a phase of the prototype still fails its test" : "the prototype has errors"
+    return { text: `You stopped, but ${what}. Fix it now, then stop.\n\n${state.report}`, agent: state.agent, model: state.model }
   }
 
   /**
